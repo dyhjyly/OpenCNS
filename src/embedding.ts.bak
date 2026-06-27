@@ -1,0 +1,39 @@
+import dotenv from 'dotenv';
+
+dotenv.config();
+
+const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
+const DEEPSEEK_EMBEDDING_URL = 'https://api.siliconflow.cn/v1/embeddings';
+const EMBEDDING_MODEL = 'BAAI/bge-m3';
+
+if (!DEEPSEEK_API_KEY) {
+  throw new Error('Missing DEEPSEEK_API_KEY environment variable');
+}
+
+export async function getEmbedding(text: string): Promise<number[]> {
+  const response = await fetch(DEEPSEEK_EMBEDDING_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${DEEPSEEK_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: EMBEDDING_MODEL,
+      input: text,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`DeepSeek embedding API error: ${response.status} ${errorText}`);
+  }
+
+  const data = await response.json() as { data: Array<{ embedding: number[] }> };
+  
+  // DeepSeek returns data in format: { data: [{ embedding: number[] }] }
+  if (data.data && data.data.length > 0) {
+    return data.data[0].embedding;
+  }
+
+  throw new Error('Unexpected DeepSeek API response format');
+}

@@ -1,0 +1,2 @@
+export declare const ANALYZER_PROMPT = "\n\u4F60\u662F\u8BB0\u5FC6\u5206\u6790\u5668\u3002\n\n\u5206\u6790\u7528\u6237\u8F93\u5165\u5E76\u8FD4\u56DE JSON\u3002\n\n\u5B57\u6BB5\uFF1A\n\nmemory_type:\n- fact\n- understanding\n- belief\n\nimportance:\n0~1\n\nunresolved:\ntrue/false\n\nvalence:\n-1~1\n\narousal:\n0~1\n\nkeywords:\n\u6700\u591A5\u4E2A\u5173\u952E\u8BCD\n\n\u53EA\u5141\u8BB8\u8FD4\u56DE JSON\u3002\n\u4E0D\u8981\u89E3\u91CA\u3002\n";
+//# sourceMappingURL=prompt.d.ts.map
