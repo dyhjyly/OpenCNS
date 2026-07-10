@@ -19,14 +19,16 @@ export async function handleSaveMemory(args: unknown) {
     const { data, error } = await supabase
       .from('memories')
       .insert({
-        content,
-        embedding,
-        metadata,
+           content,
+           embedding,
+           metadata,
 
-        memory_type: analysis.memory_type,
-        importance: analysis.importance,
-        unresolved: analysis.unresolved,
-      })
+           memory_type: analysis.memory_type,
+           importance: analysis.importance,
+           unresolved: analysis.unresolved,
+
+           memory_state: 'active',
+        })
       .select('id, content, metadata, created_at')
       .single();
 

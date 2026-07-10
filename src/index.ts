@@ -15,12 +15,15 @@ import {
   SearchMemoriesSchema,
   ReadMemorySchema,
   DeleteMemorySchema,
-} from './memory/index.js';
+  RunDecaySchema,
+} from './tools/schemas.js';
 import { analyzeMemory } from './analyzer.js';
 import { handleSaveMemory } from './memory/save.js';
 import { handleSearchMemories } from './memory/search.js';
 import { handleReadMemory } from './memory/read.js';
 import { handleDeleteMemory } from './memory/delete.js';
+import { runMemoryDecay } from './memory/decayEngine.js';
+import { runOpenCNS } from "./core/index.js";
 
 // Tool definitions
 const TOOLS = [
@@ -89,6 +92,19 @@ const TOOLS = [
       required: ['id'],
     },
   },
+  {
+  name: 'run_memory_decay',
+  description: 'Run memory decay engine to recompute importance scores',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      batchSize: {
+        type: 'number',
+        default: 50,
+      },
+    },
+  },
+ }
 ];
 
 
@@ -124,8 +140,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return await handleReadMemory(args);
       case 'delete_memory':
         return await handleDeleteMemory(args);
-      default:
-        throw new Error(`Unknown tool: ${name}`);
+      case 'run_memory_decay': {
+        const batchSize = (args as any)?.batchSize ?? 50;
+
+        const result = await runMemoryDecay(batchSize);
+
+        return {
+          content: [
+           {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+           },
+        ],
+       };
+    }
+     default:
+      throw new Error(`Unknown tool: ${name}`);
     }
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -136,7 +166,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             text: JSON.stringify({
               success: false,
               error: 'Invalid arguments',
-              details: error.issues,
+              details: (error as any).issues,
             }, null, 2),
           },
         ],
@@ -248,6 +278,9 @@ app.all('/messages', async (req, res) => {
 // Main
 // ============================================
 async function main() {
+    const result = await runOpenCNS();
+     console.dir(result, { depth: null });
+    
   const args = process.argv.slice(2);
   const portIndex = args.indexOf('--port');
   const port = portIndex !== -1 ? parseInt(args[portIndex + 1], 10) : 3000;

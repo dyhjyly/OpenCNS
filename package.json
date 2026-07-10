@@ -2,11 +2,11 @@
   "name": "mcp-memory-server",
   "version": "1.0.0",
   "description": "",
-  "main": "build/index.js",
+  "main": "build/src/index.js",
   "scripts": {
     "build": "tsc",
-    "start": "node build/index.js",
-    "dev": "tsc && node build/index.js"
+    "start": "node build/src/index.js",
+    "dev": "tsc && node build/src/index.js"
   },
   "keywords": [],
   "author": "",

@@ -33,6 +33,7 @@ export async function handleSearchMemories(args: unknown) {
       return failure(`Failed to search memories: ${error.message}`);
     }
 
+
     return success({
       success: true,
       query,

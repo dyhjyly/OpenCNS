@@ -3,7 +3,7 @@ export const ANALYZER_PROMPT = `
 
 分析用户输入并返回 JSON。
 
-字段：
+字段:
 
 memory_type:
 - fact
@@ -17,6 +17,7 @@ unresolved:
 true/false
 
 valence:
+
 -1~1
 
 arousal:
