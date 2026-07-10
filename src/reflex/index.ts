@@ -1,18 +1,32 @@
-/**
- * Reflex Module
- *
- * System-level decision signal aggregator.
- */
+import { providers } from "./providers";
+import { buildContext, ReflexContext } from "./context";
 
-export async function runReflex() {
-  return {
-    enabled: true,
-    decision: "idle",
-    signals: 0,
-    status: "placeholder",
-  };
+export async function runReflex(
+    query: string
+): Promise<ReflexContext> {
+
+    const results = await Promise.all(
+        providers.map(provider => provider.activate(query))
+    );
+
+    const activations = results.flat();
+
+    return buildContext(activations);
 }
 
+
+/**
+ * 兼容旧版 Scheduler
+ */
 export const ReflexModule = {
-  run: runReflex,
+
+    async run() {
+
+        const context = await runReflex("");
+
+        return {
+            decision: "continue",
+            context
+        };
+    }
 };
