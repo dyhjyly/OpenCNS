@@ -20,22 +20,21 @@ export async function findCompressionCandidates(limit = 20) {
     .limit(limit);
 
   if (error) {
-    throw new Error(`Compression query failed: ${error.message}`);
+    throw new Error(
+      `Compression query failed: ${error.message}`
+    );
   }
 
-const candidates = data ?? [];
+  const candidates = data ?? [];
 
-if (candidates.length < 2) {
-  return [];
-}
+  if (candidates.length < 2) {
+    return [];
+  }
 
-return [
-  {
-    group: "default",
-    memories: candidates,
-  },
-];   
-
-
-   return data ?? [];
+  return [
+    {
+      group: "default",
+      memories: candidates,
+    },
+  ];
 }
