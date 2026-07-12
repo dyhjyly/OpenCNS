@@ -22,7 +22,7 @@ export const ReflexModule = {
 
     async run() {
 
-        const context = await runReflex("");
+        const context = await buildContext([]);
 
         return {
             decision: "continue",

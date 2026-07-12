@@ -7,6 +7,7 @@ import {
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import express from 'express';
+import cors from 'cors';
 import { supabase } from './db.js';
 import { getEmbedding } from './embedding.js';
 import { z } from 'zod';
@@ -24,6 +25,8 @@ import { handleReadMemory } from './memory/read.js';
 import { handleDeleteMemory } from './memory/delete.js';
 import { runMemoryDecay } from './memory/decayEngine.js';
 import { runOpenCNS } from "./core/index.js";
+import { handleChat } from "./gateway/index.js"
+
 
 // Tool definitions
 const TOOLS = [
@@ -184,6 +187,16 @@ return server;
 // ============================================
 function startHttpServer(port: number) {
   const app = express();
+
+  app.use(cors({
+  origin: [
+    "https://yy-home-frontend.vercel.app",
+    "http://localhost:5173"
+  ],
+  methods: ["GET", "POST"],
+  allowedHeaders: ["Content-Type"],
+}));
+
   app.use(express.json());
 
  
@@ -261,6 +274,37 @@ app.all('/messages', async (req, res) => {
     }
   });
 
+  // ============================================
+// Chat API
+// ============================================
+
+app.post("/chat", async (req, res) => {
+  try {
+    const { message } = req.body;
+
+    if (!message) {
+      res.status(400).json({
+        error: "message is required",
+      });
+      return;
+    }
+
+    const result = await handleChat({
+      message,
+    });
+
+    res.json(result);
+
+  } catch (error) {
+    res.status(500).json({
+      error:
+        error instanceof Error
+          ? error.message
+          : "Unknown error",
+    });
+  }
+});
+
   app.listen(port, () => {
     console.error(`========================================`);
     console.error(`  MCP Memory Server started`);
@@ -273,6 +317,8 @@ app.all('/messages', async (req, res) => {
     console.error(`========================================`);
   });
 }
+
+
 
 // ============================================
 // Main
