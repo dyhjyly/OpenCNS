@@ -1,15 +1,22 @@
 import { z } from 'zod';
 
 export const SaveMemorySchema = z.object({
-  content: z.string().min(1, 'Content is required'),
 
-  memory_type: z.string().optional().default('fact'),
+  content:
+    z.string().min(1, 'Content is required'),
 
-  importance: z.number().optional().default(0.5),
+  memory_type:
+    z.string().optional(),
 
-  unresolved: z.boolean().optional().default(false),
+  importance:
+    z.number().optional().default(0.5),
 
-  metadata: z.record(z.string(), z.unknown()).optional().default({}),
+  unresolved:
+    z.boolean().optional().default(false),
+
+  metadata:
+    z.record(z.string(), z.unknown()).optional().default({}),
+
 });
 
 export const SearchMemoriesSchema = z.object({

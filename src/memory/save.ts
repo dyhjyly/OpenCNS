@@ -1,7 +1,6 @@
 import { supabase } from '../db.js';
 import { getEmbedding } from '../embedding.js';
-import { analyzeMemory } from '../analyzer.js';
-
+import { analyzeMemory } from '../analyzer/index.js';
 import { SaveMemorySchema } from './types.js';
 import { success, failure } from './utils.js';
 

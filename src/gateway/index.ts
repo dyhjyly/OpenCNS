@@ -1,13 +1,16 @@
 import { runReflex } from "../reflex/index.js";
- import {
+import {
     buildReflexPrompt
-  } from "../reflex/context/prompt.js";
+} from "../reflex/context/prompt.js";
+
 import {
     chat,
     ChatMessage
 } from "../llm/index.js";
+
 import {
-    handleSaveMemory
+    handleSaveMemory,
+    handleSearchMemories
 } from "../memory/index.js";
 
 
@@ -19,6 +22,7 @@ export interface ChatResponse {
     reply: string;
 }
 
+
 export async function handleChat(
     request: ChatRequest
 ): Promise<ChatResponse> {
@@ -27,10 +31,32 @@ export async function handleChat(
         request.message
     );
 
+
+    // 搜索长期记忆
+    const memories = await handleSearchMemories({
+        query: request.message,
+    });
+
+
+    const memoryContext = Array.isArray(memories)
+        ? memories
+            .map((m: { content?: string }) => `- ${m.content ?? ""}`)
+            .join("\n")
+        : "";
+
+
     const messages: ChatMessage[] = [
         {
             role: "system",
-            content: buildReflexPrompt(context)
+            content:
+                buildReflexPrompt(context)
+                +
+                (
+                    memoryContext
+                        ? "\n\n以下是相关长期记忆，请自然利用，不要逐条复述。\n\n"
+                        + memoryContext
+                        : ""
+                )
         },
         {
             role: "user",
@@ -38,16 +64,20 @@ export async function handleChat(
         }
     ];
 
+
     const response = await chat({
         messages
     });
-   
-   await handleSaveMemory({
-    content: request.message,
-    metadata: {
-        source: "gateway",
+
+
+    // 保存当前对话记忆
+    await handleSaveMemory({
+        content: request.message,
+        metadata: {
+            source: "gateway",
         }
-      });
+    });
+
 
     return {
         reply: response.content

@@ -10,6 +10,16 @@ export interface ModelConfig {
 
     model: string;
 
+    chatModel?: string;
+
+    analyzerModel?: string;
+
+    memoryModel?: string;
+
+    dreamModel?: string;
+
+    identityModel?: string;
+
     baseUrl?: string;
 
     apiKey?: string;
@@ -31,6 +41,11 @@ export const CHAT_MODEL_CONFIG: ModelConfig = {
         "openai-compatible") as ProviderName,
 
     model:
+        process.env.CHAT_MODEL ||
+        "",
+
+    chatModel:
+        process.env.LLM_CHAT_MODEL ||
         process.env.CHAT_MODEL ||
         "",
 
@@ -58,6 +73,26 @@ export const COGNITIVE_MODEL_CONFIG: ModelConfig = {
         "openai-compatible") as ProviderName,
 
     model:
+        process.env.COGNITIVE_MODEL ||
+        "",
+
+    analyzerModel:
+        process.env.LLM_ANALYZER_MODEL ||
+        process.env.COGNITIVE_MODEL ||
+        "",
+
+    memoryModel:
+        process.env.LLM_MEMORY_MODEL ||
+        process.env.COGNITIVE_MODEL ||
+        "",
+
+    dreamModel:
+        process.env.LLM_DREAM_MODEL ||
+        process.env.COGNITIVE_MODEL ||
+        "",
+
+    identityModel:
+        process.env.LLM_IDENTITY_MODEL ||
         process.env.COGNITIVE_MODEL ||
         "",
 

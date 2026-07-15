@@ -61,7 +61,7 @@ implements ModelProvider {
                   body: JSON.stringify({
 
                    model:
-                     this.config.model,
+                     request.model ?? this.config.chatModel,
 
                    messages:
                      request.messages,

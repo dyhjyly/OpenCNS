@@ -24,9 +24,9 @@ export async function runCompression() {
 const summaries = [];
 
 for (const group of groups) {
-  const summary = generateCompressionSummary(
+  const summary = await generateCompressionSummary(
     group.memories
-  );
+    );
 
   const saved = await MemoryModule.save({
     content: summary,
