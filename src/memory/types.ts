@@ -1,5 +1,21 @@
 import { z } from 'zod';
 
+export const MemoryState = z.enum([
+
+  "active",
+
+  "compressed",
+
+  "archived",
+
+  "pruned",
+
+]);
+
+
+export type MemoryState =
+z.infer<typeof MemoryState>;
+
 export const SaveMemorySchema = z.object({
 
   content:

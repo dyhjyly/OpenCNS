@@ -1,31 +1,44 @@
-/**
- * OpenCNS Archive Module v1
- *
- * Move compressed memories into long-term archive.
- */
-
-
 import { supabase } from "../db.js";
+
+import {
+    MemoryState
+} from "../memory/types.js";
+
+
+/**
+ * OpenCNS Archive Module v2
+ *
+ * compressed → archived
+ */
 
 
 export async function runArchive() {
 
 
+    const fromState:
+    MemoryState =
+    "compressed";
+
+
+    const toState:
+    MemoryState =
+    "archived";
+
+
+
     const { data, error } =
         await supabase
             .from("memories")
-            .select(
-                "id"
-            )
+            .select("id")
             .eq(
                 "memory_state",
-                "compressed"
+                fromState
             )
             .limit(50);
 
 
 
-    if (error) {
+    if(error){
 
         throw new Error(
             `Archive query failed: ${error.message}`
@@ -36,25 +49,23 @@ export async function runArchive() {
 
 
     const ids =
-        (data ?? [])
-        .map(
-            item => item.id
-        );
+    (data ?? [])
+    .map(
+        item => item.id
+    );
 
 
 
-    if (
-        ids.length === 0
-    ) {
+    if(ids.length === 0){
 
         return {
 
-            enabled: true,
+            enabled:true,
 
-            archived: 0,
+            archived:0,
 
             status:
-                "no candidates"
+            "no candidates"
 
         };
 
@@ -62,23 +73,25 @@ export async function runArchive() {
 
 
 
-    const { error: updateError } =
-        await supabase
-            .from("memories")
-            .update({
+    const {
+        error:updateError
+    } =
+    await supabase
+        .from("memories")
+        .update({
 
-                memory_state:
-                    "archived"
+            memory_state:
+            toState
 
-            })
-            .in(
-                "id",
-                ids
-            );
+        })
+        .in(
+            "id",
+            ids
+        );
 
 
 
-    if (updateError) {
+    if(updateError){
 
         throw new Error(
             `Archive update failed: ${updateError.message}`
@@ -90,13 +103,13 @@ export async function runArchive() {
 
     return {
 
-        enabled: true,
+        enabled:true,
 
         archived:
-            ids.length,
+        ids.length,
 
         status:
-            "completed"
+        "completed"
 
     };
 

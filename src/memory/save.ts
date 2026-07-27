@@ -27,6 +27,10 @@ export async function handleSaveMemory(args: unknown) {
            unresolved: analysis.unresolved,
 
            memory_state: 'active',
+
+           access_count: 0,
+
+           last_accessed: new Date().toISOString(),
         })
       .select('id, content, metadata, created_at')
       .single();

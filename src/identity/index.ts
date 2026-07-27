@@ -1,37 +1,51 @@
 /**
- * OpenCNS Identity Module v1
+ * OpenCNS Identity Module v2
  *
  * Maintains long-term system identity.
+ *
+ * Identity is generated from
+ * protected identity memories.
  */
 
 
 import { supabase } from "../db.js";
+import {
+    updateIdentityState
+} from "./state.js";
 
 
 export async function runIdentity() {
 
 
-    const { data, error } =
-        await supabase
-            .from("memories")
-            .select(
-                "content, created_at"
-            )
-            .eq(
-                "memory_type",
-                "identity"
-            )
-            .order(
-                "created_at",
-                {
-                    ascending: false
-                }
-            )
-            .limit(20);
+    const {
+        data,
+        error
+    }
+    =
+    await supabase
+        .from("memories")
+        .select(
+            "content, created_at, importance"
+        )
+        .eq(
+            "memory_type",
+            "identity"
+        )
+        .neq(
+            "memory_state",
+            "pruned"
+        )
+        .order(
+            "importance",
+            {
+                ascending:false
+            }
+        )
+        .limit(20);
 
 
 
-    if (error) {
+    if(error){
 
         throw new Error(
             `Identity query failed: ${error.message}`
@@ -46,22 +60,20 @@ export async function runIdentity() {
 
 
 
-    if (
-        memories.length === 0
-    ) {
+    if(memories.length === 0){
 
         return {
 
-            enabled: true,
+            enabled:true,
 
-            summary:
-                "",
+            identity:"",
 
-            updated:
-                false,
+            memoryCount:0,
+
+            updated:false,
 
             status:
-                "no identity memories"
+            "no identity memories"
 
         };
 
@@ -69,31 +81,51 @@ export async function runIdentity() {
 
 
 
-    const summary =
+    const identity =
         memories
-            .map(
-                item =>
-                    item.content
-            )
-            .join(
-                "\n"
-            );
+        .map(
+            item =>
+            item.content
+        )
+        .join(
+            "\n\n"
+        );
 
 
 
-    return {
+    const state =
+updateIdentityState({
 
-        enabled: true,
+    identity,
 
-        summary,
+    memoryCount:
+        memories.length,
 
-        updated:
-            false,
+    updatedAt:
+        new Date().toISOString(),
 
-        status:
-            "loaded"
+});
 
-    };
+
+return {
+
+    enabled:true,
+
+    identity:
+        state.identity,
+
+    memoryCount:
+        state.memoryCount,
+
+    updatedAt:
+        state.updatedAt,
+
+    updated:true,
+
+    status:
+        "updated"
+
+};
 
 }
 

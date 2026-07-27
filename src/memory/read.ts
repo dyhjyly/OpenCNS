@@ -1,6 +1,7 @@
 import { supabase } from '../db.js';
 import { ReadMemorySchema } from './types.js';
 import { success, failure } from './utils.js';
+import { touchMemory } from "./touch.js";
 
 export async function handleReadMemory(args: unknown) {
   try {
@@ -13,13 +14,7 @@ export async function handleReadMemory(args: unknown) {
      .single();
 
     if (!error && data) {
-      await supabase
-       .from('memories')
-       .update({
-         last_accessed: new Date().toISOString(),
-         access_count: (data.access_count ?? 0) + 1,
-       })
-       .eq('id', id);
+      await touchMemory(id);
    }
 
     if (error) {

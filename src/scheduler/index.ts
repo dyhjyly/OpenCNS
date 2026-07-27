@@ -3,35 +3,86 @@ import { ReflexModule } from "../reflex/index.js";
 
 /**
  * OpenCNS Scheduler v2 (Reflex-driven loop)
+ *
+ * Development mode:
+ *  - Reflex enabled
+ *  - Memory lifecycle disabled
+ *
+ * Production mode:
+ *  - Full cognitive lifecycle enabled
  */
 
 export async function runScheduler() {
+
   const cycles = [];
 
   let i = 0;
 
-  while (true) {
-    const memory = await MemoryModule.lifecycle();
 
-    const reflex = await ReflexModule.run();
+  const enableMemoryLifecycle =
+    process.env.OPEN_CNS_LIFECYCLE === "true";
+
+
+  while (true) {
+
+
+    let memory:any = {
+       enabled:false,
+       status:"disabled"
+      };
+
+
+    if(enableMemoryLifecycle){
+
+      memory =
+        await MemoryModule.lifecycle();
+
+    }
+
+
+    const reflex =
+      await ReflexModule.run();
+
 
     cycles.push({
-      cycle: i,
+
+      cycle:i,
+
       memory,
+
       reflex,
+
     });
+
 
     i++;
 
-    // 🧠 Reflex 决策: 是否继续
-    if (reflex.decision === "stop" || i >= 3) {
+
+    if(
+      reflex.decision === "stop"
+      ||
+      i >= 3
+    ){
+
       break;
+
     }
+
   }
 
+
   return {
-    running: true,
-    mode: "reflex-loop-v2",
+
+    running:true,
+
+    mode:
+      "reflex-loop-v2",
+
+    lifecycle:
+      enableMemoryLifecycle,
+
     cycles,
+
   };
+
 }

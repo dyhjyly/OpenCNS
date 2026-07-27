@@ -19,14 +19,14 @@ implements ActivationProvider {
         const profile =
             await IdentityModule.run();
 
-        if (!profile.summary) {
+        if (!profile.identity) {
             return [];
         }
 
         return [
             {
                 source: "identity",
-                content: profile.summary,
+                content: profile.identity,
                 score: 0.95,
                 metadata: {
                     updated: profile.updated

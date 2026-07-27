@@ -3,16 +3,16 @@ import { handleSearchMemories } from "./search.js";
 import { handleReadMemory } from "./read.js";
 import { handleDeleteMemory } from "./delete.js";
 import { runLifecycle } from "./lifecycle.js";
-
+import { analyzeMemory } from "../analyzer/index.js";
 import {
   SaveMemorySchema,
   SearchMemoriesSchema,
   ReadMemorySchema,
   DeleteMemorySchema,
 } from "./types.js";
-
 import { PerceptionResult } from "../perception/index.js";
 const memoryStore: any[] = [];
+import { touchMemory } from "./touch.js";
 
 /**
  * =========================
@@ -80,10 +80,12 @@ function computeImportanceFromPerception(p: PerceptionResult) {
  * =========================
  */
 export const MemoryModule = {
+  analyze:analyzeMemory,
   save: handleSaveMemory,
   search: handleSearchMemories,
   read: handleReadMemory,
   delete: handleDeleteMemory,
+  touch: touchMemory,
   lifecycle: runLifecycle,
   storePerception,
 

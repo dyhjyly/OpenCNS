@@ -38,7 +38,26 @@ export async function runDreamReview() {
 
 
     const memories =
-        data ?? [];
+      (data ?? []).filter((m) => {
+      const text = (m.content ?? "").trim();
+
+    // 空内容
+    if (!text) return false;
+
+    // 太短
+    if (text.length < 12) return false;
+
+    // 测试文本
+    if (/测试|test|hello/i.test(text)) return false;
+
+    // Dream 自己产生的总结
+    if (text.startsWith("Dream Review Summary")) return false;
+
+    // 身份反思
+    if (text.startsWith("Long-term identity reflection")) return false;
+
+    return true;
+  });
 
 
 
@@ -59,17 +78,24 @@ export async function runDreamReview() {
 
     }
 
+// 去重，避免重复内容
+     const uniqueContents = [
+        ...new Set(memories.map((m) => m.content.trim())),
+     ];
 
+     if (uniqueContents.length === 0) {
+     return {
+      enabled: true,
+      reviewed: 0,
+      status: "nothing to review",
+    };
+   }
 
     const reflection =
-        `Dream Review Summary:\n` +
-        memories
-            .map(
-                m =>
-                `- ${m.content}`
-            )
-            .join("\n");
-
+       "Dream Review Summary:\n" +
+        uniqueContents
+       .map((text) => `- ${text}`)
+       .join("\n");
 
 
     const saved =
