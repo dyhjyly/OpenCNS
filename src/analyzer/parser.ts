@@ -1,53 +1,105 @@
-import { AnalysisResult } from "./types.js";
+import {
+  AnalysisResult,
+  MemoryType,
+  CognitiveSubject,
+} from "./types.js";
 
-export function parseAnalysis(data: any): AnalysisResult {
+function parseOne(result: any): AnalysisResult {
 
-   console.log("ANALYZER DATA:", JSON.stringify(data, null, 2));
+  return {
 
-    const text =
+    speaker:
+      result?.speaker ?? "user",
+
+    subject:
+      result?.subject ?? "user",
+
+    memory_type:
+      result?.memory_type ?? "fact",
+
+    content:
+      result?.content ?? "",
+
+    importance:
+      Number(result?.importance ?? 0.5),
+
+    unresolved:
+      Boolean(result?.unresolved ?? false),
+
+    valence:
+      Number(result?.valence ?? 0),
+
+    arousal:
+      Number(result?.arousal ?? 0),
+
+    keywords:
+      Array.isArray(result?.keywords)
+        ? result.keywords
+        : [],
+
+  };
+
+}
+
+
+export function parseAnalysis(
+  data: any
+): AnalysisResult[] {
+
+  console.log(
+    "ANALYZER DATA:",
+    JSON.stringify(data, null, 2)
+  );
+
+
+  const text =
     data?.content
     ??
     data?.choices?.[0]?.message?.content
     ??
-    '{}';
+    '[]';
 
-    console.log("ANALYZER RAW:", text);
-   
-    let result;
 
-    try {
+  console.log(
+    "ANALYZER RAW:",
+    text
+  );
 
-        result = JSON.parse(text);
 
-    } catch {
+  let result: any;
 
-        const fixed = text
-            .replace(/```json/g, "")
-            .replace(/```/g, "")
-            .trim();
 
-        result = JSON.parse(fixed);
-    }
+  try {
 
-    return {
+    result =
+      JSON.parse(text);
 
-        memory_type:
-            result.memory_type ?? "fact",
+  } catch {
 
-        importance:
-            result.importance ?? 0.5,
+    const fixed =
+      text
+        .replace(/```json/g, "")
+        .replace(/```/g, "")
+        .trim();
 
-        unresolved:
-            result.unresolved ?? false,
+    result =
+      JSON.parse(fixed);
 
-        valence:
-            result.valence ?? 0,
+  }
 
-        arousal:
-            result.arousal ?? 0,
 
-        keywords:
-            result.keywords ?? [],
+  if (!Array.isArray(result)) {
 
-    };
+    result = [result];
+
+  }
+
+
+  return result
+    .map(parseOne)
+    .filter(
+      (item: AnalysisResult) =>
+        item.content.length > 0
+    );
+
 }

@@ -197,7 +197,7 @@ function startHttpServer(port: number) {
   allowedHeaders: ["Content-Type"],
 }));
 
-  app.use(express.json());
+  app.use(express.json({ limit: "25mb" }));
 
  
   // MCP StreamableHTTP endpoint - handles all MCP protocol messages
@@ -280,7 +280,15 @@ app.all('/messages', async (req, res) => {
 
 app.post("/chat", async (req, res) => {
   try {
-    const { message } = req.body;
+    console.error("[CHAT ROUTE TEST] /chat HIT", req.body?.message);
+ 
+     const {
+     message,
+     sessionId,
+     endSession,
+     images,
+     files,
+    } = req.body;
 
     if (!message) {
       res.status(400).json({
@@ -291,7 +299,11 @@ app.post("/chat", async (req, res) => {
 
     const result = await handleChat({
       message,
-    });
+      sessionId,
+      endSession,
+      images,
+      files,
+   });
 
     res.json(result);
 

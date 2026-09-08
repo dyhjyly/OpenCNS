@@ -1,6 +1,5 @@
 import { supabase } from '../db.js';
 import { getEmbedding } from '../embedding.js';
-import { analyzeMemory } from '../analyzer/index.js';
 import { SaveMemorySchema } from './types.js';
 import { success, failure } from './utils.js';
 
@@ -9,29 +8,30 @@ export async function handleSaveMemory(args: unknown) {
     const {
       content,
       metadata,
+      memory_type,
+      importance,
+      unresolved,
     } = SaveMemorySchema.parse(args);
-
-    const analysis = await analyzeMemory(content);
 
     const embedding = await getEmbedding(content);
 
     const { data, error } = await supabase
       .from('memories')
       .insert({
-           content,
-           embedding,
-           metadata,
+        content,
+        embedding,
+        metadata,
 
-           memory_type: analysis.memory_type,
-           importance: analysis.importance,
-           unresolved: analysis.unresolved,
+        memory_type: memory_type ?? "fact",
+        importance: importance ?? 0.5,
+        unresolved: unresolved ?? false,
 
-           memory_state: 'active',
+        memory_state: 'active',
 
-           access_count: 0,
+        access_count: 0,
 
-           last_accessed: new Date().toISOString(),
-        })
+        last_accessed: new Date().toISOString(),
+      })
       .select('id, content, metadata, created_at')
       .single();
 
@@ -54,4 +54,3 @@ export async function handleSaveMemory(args: unknown) {
     return failure(error?.message ?? 'Unknown error');
   }
 }
-

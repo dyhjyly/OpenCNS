@@ -3,29 +3,23 @@ import type {
     ActivationProvider
 } from "../../types";
 
-import { MemoryModule } from "../../../memory/index.js";
+export class MemoryProvider
+implements ActivationProvider {
 
-export class MemoryProvider implements ActivationProvider {
+    async activate(
+        query: string
+    ): Promise<Activation[]> {
 
-    async activate(query: string): Promise<Activation[]> {
+        void query;
 
-        const result = await MemoryModule.search({
-            query
-        });
+        /*
+         * Long-term memory retrieval
+         * is now handled exclusively by Recall.
+         *
+         * Reflex must not search memories
+         * automatically on every message.
+         */
 
-        if (!result) {
-            return [];
-        }
-
-        return [
-            {
-                source: "memory",
-                content: JSON.stringify(result),
-                score: 1,
-                metadata: {
-                    query
-                }
-            }
-        ];
+        return [];
     }
 }

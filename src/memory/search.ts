@@ -47,6 +47,12 @@ export async function handleSearchMemories(args: unknown) {
      *
      * 搜索命中即视为一次使用
      */
+    console.log('[MEMORY SEARCH RESULT]', {
+      query,
+      count: data?.length ?? 0,
+      results: data ?? [],
+     });
+     
     if(data?.length){
 
       for(const item of data){

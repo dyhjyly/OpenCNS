@@ -3,9 +3,33 @@ export type ModelRole =
     | "user"
     | "assistant";
 
+export interface ChatImage {
+    type: "image_url";
+    image_url: {
+        url: string;
+    };
+}
+
+export interface ChatFile {
+    name: string;
+    type: string;
+    data: string;
+}
+
+export type ChatContent =
+    | string
+    | Array<
+        | {
+            type: "text";
+            text: string;
+        }
+        | ChatImage
+        | ChatFile
+      >;
+
 export interface ChatMessage {
     role: ModelRole;
-    content: string;
+    content: ChatContent;
 }
 
 export interface ChatRequest {
@@ -22,4 +46,3 @@ export interface ModelProvider {
         request: ChatRequest
     ): Promise<ChatResponse>;
 }
-

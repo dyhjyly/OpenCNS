@@ -29,8 +29,8 @@ export function isMemoryCandidate(text: string): {
     };
   }
 
-  for (const item of BLOCK_LIST) {
-    if (content.includes(item)) {
+    for (const item of BLOCK_LIST) {
+    if (content === item) {
       return {
         ok: false,
         reason: "block-list",

@@ -1,5 +1,25 @@
+export type MemoryType =
+  | 'fact'
+  | 'preference'
+  | 'goal'
+  | 'identity'
+  | 'belief'
+  | 'error'
+  | 'understanding';
+
+export type CognitiveSubject =
+  | 'user'
+  | 'assistant'
+  | 'shared';
+
 export interface AnalysisResult {
-  memory_type: 'fact' | 'understanding' | 'belief';
+  speaker: string;
+
+  subject: CognitiveSubject;
+
+  memory_type: MemoryType;
+
+  content: string;
 
   importance: number;
 

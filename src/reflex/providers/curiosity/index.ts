@@ -32,13 +32,26 @@ implements ActivationProvider {
         }
 
 
+        const topSignal =
+            [...result.items]
+                .sort(
+                    (a, b) =>
+                        b.importance -
+                        a.importance
+                )[0];
+
+
         return [
             {
                 source: "curiosity",
-                content: JSON.stringify(
-                    result.items
-                ),
-                score: 0.8,
+
+                content:
+                    "- " +
+                    topSignal.content,
+
+                score:
+                    topSignal.importance,
+
                 metadata: {
                     signals:
                         result.signals
