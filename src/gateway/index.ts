@@ -29,6 +29,10 @@ import {
 } from "../session/index.js";
 
 import {
+    conversationState
+} from "../conversation/index.js";
+
+import {
     readUploadedFile
 } from "../files/reader.js";
 
@@ -119,11 +123,28 @@ export async function handleChat(
         sessionId =
             session.id;
 
+        await conversationState.create(
+            sessionId
+        );
+
     } else {
 
         await sessionManager.updateActive(
             sessionId
         );
+
+        const existingConversationState =
+            await conversationState.get(
+                sessionId
+            );
+
+        if (!existingConversationState) {
+
+            await conversationState.create(
+                sessionId
+            );
+
+        }
 
     }
 
@@ -137,6 +158,17 @@ export async function handleChat(
 
     console.log(
         "[CHAT] reflex:start"
+    );
+
+
+    await conversationState.addMessage(
+        sessionId,
+        {
+            id: crypto.randomUUID(),
+            role: "user",
+            content: request.message,
+            createdAt: new Date().toISOString()
+        }
     );
 
 
@@ -529,6 +561,17 @@ const messages: ChatMessage[] = [
 
     console.log(
         "[CHAT] working-memory:add-assistant:start"
+    );
+
+
+    await conversationState.addMessage(
+        sessionId,
+        {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: response.content,
+            createdAt: new Date().toISOString()
+        }
     );
 
 
