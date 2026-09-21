@@ -574,6 +574,13 @@ const messages: ChatMessage[] = [
         }
     );
 
+    void conversationState.compressIfNeeded(sessionId)
+        .then(() => {
+        console.log("[CONVERSATION] rolling-summary:check:end");
+    })
+        .catch(error => {
+        console.error("[CONVERSATION] rolling-summary:check:error", error);
+    });
 
     await workingMemory.add({
 
