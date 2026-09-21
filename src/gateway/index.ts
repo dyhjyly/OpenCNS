@@ -428,6 +428,24 @@ const dynamicContext =
         context
     );
 
+const conversation =
+    await conversationState.get(
+        sessionId
+    );
+
+const rollingSummary =
+    conversation?.rollingSummary ?? "";
+
+const conversationPrompt =
+    rollingSummary
+        ? "\n\n" +
+          "以下是当前对话此前已经形成的 Rolling Summary。" +
+          "\n它用于保持当前会话的连续性。" +
+          "\n只在相关时使用，不要逐条复述。" +
+          "\n\n" +
+          rollingSummary
+        : "";
+
 const recallPrompt =
     recallContext
         ? "\n\n" +
@@ -440,15 +458,22 @@ const recallPrompt =
 const workingPrompt = "";
 
 console.log(
+    "[CONVERSATION] rolling-summary:length =",
+    rollingSummary.length
+);
+
+console.log(
     "[CACHE SPLIT]",
     JSON.stringify({
         stable: stablePrompt.length,
         dynamic: dynamicContext.length,
         recall: recallPrompt.length,
+        conversation: conversationPrompt.length,
         working: workingPrompt.length,
         total:
             stablePrompt.length +
             dynamicContext.length +
+            conversationPrompt.length +
             recallPrompt.length +
             workingPrompt.length
     })
@@ -466,6 +491,7 @@ const messages: ChatMessage[] = [
         role: "user",
         content:
             dynamicContext +
+            conversationPrompt +
             recallPrompt +
             workingPrompt +
             "\n\n当前用户消息：\n" +
