@@ -4,15 +4,11 @@ import {
 } from "./state.js";
 
 import {
-    buildSummaryInput
-} from "./summary.js";
+    loadRecentMessages,
+    saveRecentMessage,
+    trimRecentMessages
+} from "./store.js";
 
-import {
-    generateRollingSummary
-} from "./summaryGenerator.js";
-
-
-const MAX_RECENT_MESSAGES = 20;
 
 class ConversationStateManager {
 
@@ -24,6 +20,11 @@ class ConversationStateManager {
     async create(
         sessionId: string
     ): Promise<ConversationState> {
+
+        const recentMessages =
+            await loadRecentMessages(
+                sessionId
+            );
 
         const now =
             new Date().toISOString();
@@ -38,11 +39,7 @@ class ConversationStateManager {
             updatedAt:
                 now,
 
-            rollingSummary:
-                "",
-
-            recentMessages:
-                []
+            recentMessages
 
         };
 
@@ -74,7 +71,7 @@ class ConversationStateManager {
         message: ConversationMessage
     ): Promise<ConversationState> {
 
-        const state =
+        let state =
             this.states.get(
                 sessionId
             );
@@ -82,141 +79,51 @@ class ConversationStateManager {
 
         if (!state) {
 
-            throw new Error(
-                `Conversation state not found: ${sessionId}`
-            );
+            state =
+                await this.create(
+                    sessionId
+                );
 
         }
+
+
+        const nextSequence =
+            state.recentMessages.length > 0
+                ? state.recentMessages[
+                    state.recentMessages.length - 1
+                ].createdAt === message.createdAt
+                    ? state.recentMessages.length
+                    : Date.now()
+                : Date.now();
+
+
+        await saveRecentMessage(
+            sessionId,
+            message,
+            nextSequence
+        );
 
 
         state.recentMessages.push(
-          message
+            message
         );
+
 
         if (
-           state.recentMessages.length >
-           MAX_RECENT_MESSAGES
+            state.recentMessages.length > 60
         ) {
 
-        state.recentMessages =
-            state.recentMessages.slice(
-                -MAX_RECENT_MESSAGES
-            );
+            state.recentMessages =
+                state.recentMessages.slice(
+                    -60
+                );
 
         }
 
 
-        state.updatedAt =
-            new Date().toISOString();
-
-
-        return state;
-
-    }
-
-
-async getSummary(
-    sessionId: string
-): Promise<string> {
-
-    const state =
-        this.states.get(
+        await trimRecentMessages(
             sessionId
         );
-
-
-    if (!state) {
-
-        throw new Error(
-            `Conversation state not found: ${sessionId}`
-        );
-
-    }
-
-
-    return state.rollingSummary;
-
-}
-
-    async compressIfNeeded(
-    sessionId: string
-): Promise<ConversationState> {
-
-    const state =
-        this.states.get(
-            sessionId
-        );
-
-
-    if (!state) {
-
-        throw new Error(
-            `Conversation state not found: ${sessionId}`
-        );
-
-    }
-
-
-    const result =
-        buildSummaryInput(
-            state.rollingSummary,
-            state.recentMessages
-        );
-
-
-    if (
-        result.summaryInput.messages.length === 0
-    ) {
-
-        return state;
-
-    }
-
-
-    const summary =
-        await generateRollingSummary(
-            result.summaryInput
-        );
-
-
-    state.rollingSummary =
-        summary;
-
-
-    state.recentMessages =
-        result.retainedMessages;
-
-
-    state.updatedAt =
-        new Date().toISOString();
-
-
-    return state;
-
-}
-
-    async updateSummary(
-        sessionId: string,
-        summary: string
-    ): Promise<ConversationState> {
-
-        const state =
-            this.states.get(
-                sessionId
-            );
-
-
-        if (!state) {
-
-            throw new Error(
-                `Conversation state not found: ${sessionId}`
-            );
-
-        }
-
-
-        state.rollingSummary =
-            summary;
 
 
         state.updatedAt =

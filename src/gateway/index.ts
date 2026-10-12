@@ -39,6 +39,7 @@ import {
 import {
     runRecall
 } from "../recall/index.js";
+import { formatUtc8 } from "../time.js";
 
 
 export interface ChatRequest {
@@ -115,37 +116,28 @@ export async function handleChat(
      * Session
      */
 
-    if (!sessionId) {
+if (!sessionId) {
 
-        const session =
-            await sessionManager.create();
+        const session = await sessionManager.create();
+        sessionId = session.id;
 
-        sessionId =
-            session.id;
 
-        await conversationState.create(
-            sessionId
-        );
+        await conversationState.create(sessionId);
 
     } else {
 
-        await sessionManager.updateActive(
-            sessionId
-        );
+        await sessionManager.updateActive(sessionId);
+
 
         const existingConversationState =
-            await conversationState.get(
-                sessionId
-            );
+            await conversationState.get(sessionId);
+
 
         if (!existingConversationState) {
 
-            await conversationState.create(
-                sessionId
-            );
+            await conversationState.create(sessionId);
 
         }
-
     }
 
 
@@ -242,7 +234,7 @@ export async function handleChat(
             ? recallResult.recalled
                 .map(
                     item =>
-                        `- ${item.content}`
+                        `- [创建时间：${formatUtc8(item.created_at)}] ${item.content}`
                 )
                 .join("\n")
             : "";
@@ -261,7 +253,7 @@ export async function handleChat(
 
 
     const workingItems =
-        await workingMemory.list();
+        await workingMemory.list(sessionId);
 
 
     chatTimer(
@@ -433,17 +425,41 @@ const conversation =
         sessionId
     );
 
-const rollingSummary =
-    conversation?.rollingSummary ?? "";
+const recentMessages =
+    conversation?.recentMessages ?? [];
+
+console.log(
+    "[CHAT CONVERSATION]",
+    JSON.stringify({
+        sessionId,
+        messageCount: recentMessages.length,
+        messages: recentMessages.map(
+            message => ({
+                id: message.id,
+                role: message.role,
+                content: message.content,
+                createdAt: message.createdAt
+            })
+        )
+    },
+    null,
+    2)
+);
 
 const conversationPrompt =
-    rollingSummary
+    recentMessages.length > 0
         ? "\n\n" +
-          "以下是当前对话此前已经形成的 Rolling Summary。" +
-          "\n它用于保持当前会话的连续性。" +
+          "以下是当前对话最近发生的原始消息。" +
+          "\n这些消息用于保持当前对话的即时连续性。" +
+          "\n消息带有发生时间，请注意时间顺序。" +
           "\n只在相关时使用，不要逐条复述。" +
           "\n\n" +
-          rollingSummary
+          recentMessages
+              .map(
+                  message =>
+                     `- [${formatUtc8(message.createdAt)}] ${message.role}: ${message.content}`
+              )
+              .join("\n")
         : "";
 
 const recallPrompt =
@@ -455,12 +471,16 @@ const recallPrompt =
           recallContext
         : "";
 
-const workingPrompt = "";
+const workingPrompt =
+    workingContext
+        ? "\n\n" +
+          "以下是当前对话最近发生的消息。" +
+          "\n这些消息用于保持当前对话的即时连续性。" +
+          "\n只在相关时使用，不要逐条复述。" +
+          "\n\n" +
+          workingContext
+        : "";
 
-console.log(
-    "[CONVERSATION] rolling-summary:length =",
-    rollingSummary.length
-);
 
 console.log(
     "[CACHE SPLIT]",
@@ -599,14 +619,6 @@ const messages: ChatMessage[] = [
             createdAt: new Date().toISOString()
         }
     );
-
-    void conversationState.compressIfNeeded(sessionId)
-        .then(() => {
-        console.log("[CONVERSATION] rolling-summary:check:end");
-    })
-        .catch(error => {
-        console.error("[CONVERSATION] rolling-summary:check:error", error);
-    });
 
     await workingMemory.add({
 

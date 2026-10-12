@@ -1,4 +1,5 @@
 import { handleSearchMemories } from "../memory/index.js";
+import { supabase } from "../db.js";
 
 export interface RecallCandidate {
     id: string;
@@ -7,6 +8,7 @@ export interface RecallCandidate {
     importance?: number;
     unresolved?: boolean;
     similarity?: number;
+    created_at?: string;
 }
 
 
@@ -110,6 +112,37 @@ export async function retrieveCandidates(
         deduplicateCandidates(
             candidates
         );
+
+    // Attach original creation timestamps to recalled memories.
+    const ids = deduplicated
+        .map(item => item.id)
+        .filter(Boolean);
+
+    if (ids.length > 0) {
+        const { data: timestamps, error } = await supabase
+            .from("memories")
+            .select("id, created_at")
+            .in("id", ids);
+
+        if (error) {
+            console.error(
+                "[RECALL] failed to load memory timestamps:",
+                error.message
+            );
+        } else {
+            const createdAtById = new Map(
+                (timestamps ?? []).map(item => [
+                    item.id,
+                    item.created_at
+                ])
+            );
+
+            for (const item of deduplicated) {
+                item.created_at =
+                    createdAtById.get(item.id) ?? undefined;
+            }
+        }
+    }
 
     console.log(
         "[RECALL] candidates:",

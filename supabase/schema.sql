@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS memories (
 );
 
 -- 3. Create vector similarity search index
-CREATE INDEX IF NOT EXISTS memories_embedding_idx ON memories 
+CREATE INDEX IF NOT EXISTS memories_embedding_idx ON memories
   USING ivfflat (embedding vector_cosine_ops)
   WITH (lists = 100);
 
@@ -66,3 +66,128 @@ BEGIN
   LIMIT match_limit;
 END;
 $$;
+
+-- ============================================
+-- Conversation Context
+-- ============================================
+
+-- 7. Rolling Summary
+CREATE TABLE IF NOT EXISTS conversation_summaries (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  session_id UUID NOT NULL UNIQUE,
+  summary TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 8. Recent Chat
+CREATE TABLE IF NOT EXISTS recent_chat (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  session_id UUID NOT NULL,
+  sequence BIGINT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+  content TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 9. Recent Chat indexes
+CREATE INDEX IF NOT EXISTS recent_chat_session_sequence_idx
+ON recent_chat (session_id, sequence DESC);
+
+CREATE INDEX IF NOT EXISTS recent_chat_session_created_idx
+ON recent_chat (session_id, created_at DESC);
+
+-- 10. Rolling Summary updated_at trigger
+DROP TRIGGER IF EXISTS update_conversation_summaries_updated_at
+ON conversation_summaries;
+
+CREATE TRIGGER update_conversation_summaries_updated_at
+    BEFORE UPDATE ON conversation_summaries
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+-- ============================================
+-- Conversation Context v2
+-- Daily Summary + Period Summary
+-- ============================================
+
+-- 11. Daily Summary
+CREATE TABLE IF NOT EXISTS daily_summaries (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+  session_id UUID NOT NULL,
+
+  summary_date DATE NOT NULL,
+
+  summary TEXT NOT NULL DEFAULT '',
+
+  summarized_through TIMESTAMPTZ,
+
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+
+  UNIQUE (session_id, summary_date)
+);
+
+-- 12. Daily Summary indexes
+CREATE INDEX IF NOT EXISTS daily_summaries_session_date_idx
+ON daily_summaries (session_id, summary_date DESC);
+
+CREATE INDEX IF NOT EXISTS daily_summaries_session_through_idx
+ON daily_summaries (session_id, summarized_through DESC);
+
+
+-- 13. Period Summary
+CREATE TABLE IF NOT EXISTS period_summaries (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+  session_id UUID NOT NULL,
+
+  period_start DATE NOT NULL,
+
+  period_end DATE NOT NULL,
+
+  summary TEXT NOT NULL DEFAULT '',
+
+  source_through TIMESTAMPTZ,
+
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+
+  UNIQUE (session_id, period_start, period_end)
+);
+
+-- 14. Period Summary indexes
+CREATE INDEX IF NOT EXISTS period_summaries_session_period_idx
+ON period_summaries (
+  session_id,
+  period_end DESC
+);
+
+CREATE INDEX IF NOT EXISTS period_summaries_session_through_idx
+ON period_summaries (
+  session_id,
+  source_through DESC
+);
+
+
+-- 15. Daily Summary updated_at trigger
+DROP TRIGGER IF EXISTS update_daily_summaries_updated_at
+ON daily_summaries;
+
+CREATE TRIGGER update_daily_summaries_updated_at
+    BEFORE UPDATE ON daily_summaries
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+
+-- 16. Period Summary updated_at trigger
+DROP TRIGGER IF EXISTS update_period_summaries_updated_at
+ON period_summaries;
+
+CREATE TRIGGER update_period_summaries_updated_at
+    BEFORE UPDATE ON period_summaries
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
