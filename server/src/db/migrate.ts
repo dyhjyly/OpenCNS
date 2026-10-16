@@ -57,10 +57,10 @@ export async function runMigrations(dir = resolveMigrationsDir()): Promise<Migra
       )
     `);
 
-    const appliedRes = await client.query<AppliedRow>(
-      'select version, checksum from schema_migrations',
+    const appliedRes = await client.query('select version, checksum from schema_migrations');
+    const appliedMap = new Map(
+      (appliedRes.rows as AppliedRow[]).map((r) => [r.version, r.checksum]),
     );
-    const appliedMap = new Map(appliedRes.rows.map((r) => [r.version, r.checksum]));
 
     const files = (await readdir(dir)).filter((f) => f.endsWith('.sql')).sort();
     const applied: string[] = [];

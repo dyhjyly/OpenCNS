@@ -48,7 +48,8 @@ services:
       retries: 10
     mem_limit: 1200m
 
-  # 常驻认知服务（tick + HTTP + MCP）。M2 完成后启用。
+  # 常驻认知服务（tick + HTTP）。M2 起可启用：
+  #   docker compose --profile app up -d --build
   app:
     profiles: ["app"]
     build:
@@ -63,6 +64,22 @@ services:
     environment:
       # 容器内用服务名连库，覆盖 .env 里的 127.0.0.1
       DATABASE_URL: postgresql://opencns:${POSTGRES_PASSWORD}@postgres:5432/opencns
+      # 迁移文件在仓库根目录，只读挂进容器
+      MIGRATIONS_DIR: /migrations
+      # 容器内固定 3000（宿主 .env 里的 PORT=3100 是给 systemd 直跑用的）
+      PORT: 3000
+      # 容器访问宿主机上的 Ollama
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./migrations:/migrations:ro
     ports:
-      - "127.0.0.1:3000:3000"
+      # 宿主直跑占 3100，容器这套留 3110 做备选
+      - "127.0.0.1:3110:3000"
     mem_limit: 800m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

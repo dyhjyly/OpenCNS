@@ -36,6 +36,10 @@ const arr = (a) =>
 
 const norm = (s) => String(s ?? '').replace(/\s+/g, '').toLowerCase();
 
+/** 低于这个值的 importance 一律视为被衰减 bug 打坏的残骸（合法的旧值最小是 0.2） */
+const MIN_SANE_IMPORTANCE = 0.05;
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+
 /** 从正文里尽量还原"事情发生的日期"。旧库 source_start/end 全空，只能靠正文。 */
 function extractEventTime(content, createdAtUtc) {
   const base = new Date(createdAtUtc);
@@ -69,6 +73,7 @@ const stats = {
   bySource: {},
   importanceRecovered: 0,
   importanceStillDefault: 0,
+  importanceReset: 0,
   emotionFromMetadata: 0,
   emotionMissing: 0,
   eventTimeRecovered: 0,
@@ -95,17 +100,31 @@ for (const r of raw) {
   if (!md.subject) stats.subjectFilled++;
 
   // 重要度：列被默认值 0.5 污染，真值在 metadata 里
-  const mdImp = typeof md.importance === 'number' ? md.importance : null;
-  const colImp = typeof r.importance === 'number' ? r.importance : null;
-  let importance = mdImp ?? colImp ?? 0.5;
-  if (mdImp !== null && colImp === 0.5) stats.importanceRecovered++;
-  else if (mdImp === null && colImp === 0.5) stats.importanceStillDefault++;
-  const decayBroken = colImp !== null && colImp < 0.01;
-  if (decayBroken) stats.decayBrokenReset++;
+  // 另有一批记录被衰减 bug 打成了次正规浮点（如 1.07e-201），
+  // 这种值连 real 类型都装不下（会直接报 out of range），必须重置。
+  const mdImp = typeof md.importance === 'number' && Number.isFinite(md.importance) ? md.importance : null;
+  const colImp = typeof r.importance === 'number' && Number.isFinite(r.importance) ? r.importance : null;
+  let importance;
+  let importanceResetFrom = null;
+  if (mdImp !== null) {
+    importance = clamp(mdImp, 0, 1);
+    if (colImp === 0.5) stats.importanceRecovered++;
+  } else if (colImp !== null && colImp >= MIN_SANE_IMPORTANCE) {
+    importance = clamp(colImp, 0, 1);
+  } else {
+    // metadata 没有真值，列值又是默认 0.5 或衰减残骸 -> 回到中性，交给相似度去决定
+    importance = 0.5;
+    importanceResetFrom = colImp;
+    stats.importanceReset++;
+    if (colImp === 0.5) stats.importanceStillDefault++;
+  }
+  if (colImp !== null && colImp < MIN_SANE_IMPORTANCE) stats.decayBrokenReset++;
 
   // 情绪坐标：列里全是 0（不是 NULL），真值在 metadata
-  const v = typeof md.valence === 'number' ? md.valence : null;
-  const a = typeof md.arousal === 'number' ? md.arousal : null;
+  const vRaw = typeof md.valence === 'number' && Number.isFinite(md.valence) ? md.valence : null;
+  const aRaw = typeof md.arousal === 'number' && Number.isFinite(md.arousal) ? md.arousal : null;
+  const v = vRaw === null ? null : clamp(vRaw, -1, 1);
+  const a = aRaw === null ? null : clamp(aRaw, 0, 1);
   if (v !== null || a !== null) stats.emotionFromMetadata++;
   else stats.emotionMissing++;
 
@@ -148,7 +167,8 @@ for (const r of raw) {
       legacy_importance_column: colImp,
       legacy_importance_metadata: mdImp,
       legacy_memory_state: r.memory_state ?? null,
-      decay_was_broken: decayBroken,
+      importance_reset_from: importanceResetFrom,
+      decay_was_broken: colImp !== null && colImp < MIN_SANE_IMPORTANCE,
       migrated_at: new Date().toISOString(),
     },
   });
@@ -174,6 +194,19 @@ for (const r of rows) {
   stats.byState[r.state] = (stats.byState[r.state] ?? 0) + 1;
   const s = r.provenance.legacy_source ?? '(无)';
   stats.bySource[s] = (stats.bySource[s] ?? 0) + 1;
+}
+
+// 最后一道闸：宁可报错也不要让脏值进库（上一轮就是 1e-201 让整批回滚的）
+for (const r of rows) {
+  if (!Number.isFinite(r.importance) || r.importance < 0 || r.importance > 1) {
+    throw new Error(`importance 越界（legacy_id=${r.legacyId}）: ${r.importance}`);
+  }
+  if (r.valence !== null && (r.valence < -1 || r.valence > 1)) {
+    throw new Error(`valence 越界（legacy_id=${r.legacyId}）: ${r.valence}`);
+  }
+  if (r.arousal !== null && (r.arousal < 0 || r.arousal > 1)) {
+    throw new Error(`arousal 越界（legacy_id=${r.legacyId}）: ${r.arousal}`);
+  }
 }
 
 // ---------------------------------------------------------------- SQL
@@ -231,6 +264,7 @@ console.log(`来源分布            : ${JSON.stringify(stats.bySource)}`);
 console.log('');
 console.log(`重要度从 metadata 救回 : ${stats.importanceRecovered}  (${pct(stats.importanceRecovered)})`);
 console.log(`重要度仍是默认 0.5     : ${stats.importanceStillDefault}`);
+console.log(`重要度重置为中性 0.5   : ${stats.importanceReset}  (原值在 provenance.importance_reset_from)`);
 console.log(`被衰减打穿(重置 decay) : ${stats.decayBrokenReset}`);
 console.log(`情绪坐标从 metadata 取 : ${stats.emotionFromMetadata}  (${pct(stats.emotionFromMetadata)})`);
 console.log(`情绪坐标缺失           : ${stats.emotionMissing}`);

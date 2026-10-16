@@ -1,9 +1,14 @@
 import pg from 'pg';
+
 import { config } from '../config.js';
 import { log, errFields } from '../logger.js';
 
 /**
  * 单一连接池。所有 SQL 都走这里，方便统一埋点与超时。
+ *
+ * 注意：辅助函数的泛型刻意**不加** `T extends pg.QueryResultRow` 约束。
+ * 那个约束要求类型带字符串索引签名，而 interface 不会隐式获得索引签名，
+ * 于是 `many<SomeInterface>()` 会在编译期报错。这里改为在内部做一次断言。
  */
 
 export const pool = new pg.Pool({
@@ -18,20 +23,21 @@ pool.on('error', (err) => {
   log.error('数据库连接池空闲连接出错', errFields(err));
 });
 
-export async function query<T extends pg.QueryResultRow = pg.QueryResultRow>(
+export async function query<T = Record<string, unknown>>(
   text: string,
   params: unknown[] = [],
 ): Promise<pg.QueryResult<T>> {
   const started = Date.now();
   try {
-    return await pool.query<T>(text, params as never[]);
+    const res = await pool.query(text, params as never[]);
+    return res as unknown as pg.QueryResult<T>;
   } finally {
     const ms = Date.now() - started;
     if (ms > 500) log.warn('慢查询', { ms, sql: text.slice(0, 120) });
   }
 }
 
-export async function many<T extends pg.QueryResultRow = pg.QueryResultRow>(
+export async function many<T = Record<string, unknown>>(
   text: string,
   params: unknown[] = [],
 ): Promise<T[]> {
@@ -39,7 +45,7 @@ export async function many<T extends pg.QueryResultRow = pg.QueryResultRow>(
   return res.rows;
 }
 
-export async function one<T extends pg.QueryResultRow = pg.QueryResultRow>(
+export async function one<T = Record<string, unknown>>(
   text: string,
   params: unknown[] = [],
 ): Promise<T | null> {
@@ -67,7 +73,7 @@ export async function tx<T>(fn: (client: pg.PoolClient) => Promise<T>): Promise<
   }
 }
 
-/** 启动自检：连得上、版本对、pgvector 在 */
+/** 启动自检：连得上、pgvector 在不在 */
 export async function assertDatabaseReady(): Promise<{ version: string; vector: string | null }> {
   const v = await one<{ version: string }>('select version() as version');
   const ext = await one<{ extversion: string }>(

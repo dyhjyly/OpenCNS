@@ -38,6 +38,12 @@ const RawSchema = z
     PUSHPLUS_TOKEN: z.string().optional(),
     PUSHPLUS_BASE_URL: z.string().default('https://www.pushplus.plus'),
 
+    // --- 边界安全 ---
+    // 设置后，/chat 与 /admin/* 必须带 authorization: Bearer <API_TOKEN>
+    API_TOKEN: z.string().optional(),
+    // 逗号分隔的允许来源；留空则完全不开 CORS
+    CORS_ORIGINS: z.string().default(''),
+
     // --- 行为开关 ---
     ALLOW_BOOT_WRITES: z
       .enum(['true', 'false'])
@@ -114,6 +120,11 @@ export const config = {
     pushplusToken: raw.PUSHPLUS_TOKEN,
     pushplusBaseUrl: raw.PUSHPLUS_BASE_URL.replace(/\/+$/, ''),
   },
+
+  apiToken: raw.API_TOKEN,
+  corsOrigins: raw.CORS_ORIGINS.split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0),
 
   allowBootWrites: raw.ALLOW_BOOT_WRITES,
 } as const;
