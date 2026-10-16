@@ -23,14 +23,24 @@ pool.on('error', (err) => {
   log.error('数据库连接池空闲连接出错', errFields(err));
 });
 
+/**
+ * 返回结构刻意不用 pg.QueryResult<T>：那个类型自带 `T extends QueryResultRow` 约束，
+ * 而 interface 不会隐式获得字符串索引签名，于是 any interface 都用不了。
+ * 我们只需要 rows / rowCount，自己定义一个最小形状即可。
+ */
+export interface QueryResultLike<T> {
+  rows: T[];
+  rowCount: number | null;
+}
+
 export async function query<T = Record<string, unknown>>(
   text: string,
   params: unknown[] = [],
-): Promise<pg.QueryResult<T>> {
+): Promise<QueryResultLike<T>> {
   const started = Date.now();
   try {
     const res = await pool.query(text, params as never[]);
-    return res as unknown as pg.QueryResult<T>;
+    return { rows: res.rows as T[], rowCount: res.rowCount };
   } finally {
     const ms = Date.now() - started;
     if (ms > 500) log.warn('慢查询', { ms, sql: text.slice(0, 120) });
