@@ -1,6 +1,7 @@
 import { many, one, query } from '../../db/pool.js';
 import { chatJson, type ChatMessage } from '../../llm/client.js';
 import { log, errFields } from '../../logger.js';
+import { applySupersede } from '../maintenance/contradiction.js';
 import { buildCompressorMessages, renderConversationSlice, type CompressorExample } from './prompt.js';
 import { renderViolations, validateEpisode } from './validate.js';
 import type { CompressedEpisode, Violation } from './types.js';
@@ -231,6 +232,8 @@ export async function compressSlice(slice: SliceMessage[], meta: CompressMeta = 
         importance: episode.importance,
         attempt,
       });
+      // 矛盾处理：新旧冲突不删，打有向标签（异步，失败不影响入库）
+      void applySupersede(id, episode.scene, 'episode');
       return { ok: true, episodeId: id, episode, violations, attempts: attempt };
     } catch (err) {
       // 23514 = check_violation：校验器漏掉的，数据库兜住了

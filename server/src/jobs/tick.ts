@@ -1,7 +1,11 @@
 import os from 'node:os';
 
 import { log, errFields } from '../logger.js';
+import { runDecay } from '../memory/maintenance/decay.js';
+import { runDedupe, runNoiseScan } from '../memory/maintenance/dedupe.js';
 import { compressOutOfWindow, findSessionsWithPending } from '../memory/compress/pipeline.js';
+import { runTimelineBuild } from '../memory/timeline/build.js';
+import { invalidateTimelineCache } from '../memory/timeline/render.js';
 import { dispatchPending } from '../push/index.js';
 import { ensureJobs, runDueJobs, type JobDefinition } from './runner.js';
 
@@ -66,6 +70,43 @@ function buildJobs(): JobDefinition[] {
           const r = await compressOutOfWindow(s.session_id);
           log.info('会话压缩结果', r);
         }
+      },
+    },
+    {
+      // M5：衰减。按"多久没被想起"重算鲜活度，沉底归档
+      key: 'decay',
+      kind: 'maintenance',
+      everyMs: 6 * 60 * 60_000, // 每 6 小时（纯函数，重算幂等，跑勤一点没坏处）
+      async run() {
+        await runDecay();
+      },
+    },
+    {
+      // M5：时间树。周回顾 / 月档案 / 奠基事件
+      key: 'timeline_build',
+      kind: 'memory',
+      everyMs: 6 * 60 * 60_000,
+      async run() {
+        await runTimelineBuild();
+        invalidateTimelineCache(); // 新摘要要立刻生效，不能等缓存过期
+      },
+    },
+    {
+      // M5：去重。向量找候选、LLM 做判定，合并保留信息量大的那条
+      key: 'dedupe',
+      kind: 'maintenance',
+      everyMs: 7 * 24 * 60 * 60_000, // 每周
+      async run() {
+        await runDedupe();
+      },
+    },
+    {
+      // M5：降噪。只剪确凿的模板/测试文本，模糊的只登记不动手
+      key: 'noise_scan',
+      kind: 'maintenance',
+      everyMs: 24 * 60 * 60_000,
+      async run() {
+        await runNoiseScan();
       },
     },
   ];

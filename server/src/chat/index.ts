@@ -2,6 +2,7 @@ import { log, errFields } from '../logger.js';
 import { chatText, type ChatMessage } from '../llm/client.js';
 import { compressOutOfWindow, compressWholeSession } from '../memory/compress/pipeline.js';
 import { recall } from '../memory/recall/index.js';
+import { getTimelineLines } from '../memory/timeline/render.js';
 import { buildContextBlock, buildIdentityPrompt } from './prompt.js';
 import { appendMessage, closeSession, ensureSession, getActorNames, recentMessages } from './store.js';
 
@@ -53,7 +54,9 @@ export async function handleChat(req: ChatRequest): Promise<ChatResponse> {
   const history = recent.slice(0, -1); // 去掉刚插入的当前这句
 
   const messages: ChatMessage[] = [{ role: 'system', content: buildIdentityPrompt(actors) }];
-  const contextBlock = buildContextBlock({ recalled: rec.recalled });
+  // 时间树是"第二通道"，每轮固定在场；读取失败不影响对话
+  const timeline = await getTimelineLines().catch(() => [] as string[]);
+  const contextBlock = buildContextBlock({ recalled: rec.recalled, timeline });
   if (contextBlock) messages.push({ role: 'system', content: contextBlock });
   for (const m of history) {
     messages.push({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content });

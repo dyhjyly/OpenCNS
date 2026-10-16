@@ -151,6 +151,49 @@ export function startHttpServer(): Server {
     }
   });
 
+  app.post('/admin/maintenance', requireToken, async (req, res) => {
+    /**
+     * 手动跑一次养护任务，便于验收与补跑：
+     *   { "job": "decay" | "dedupe" | "noise" | "timeline" | "all" }
+     */
+    try {
+      const job = String((req.body as { job?: string })?.job ?? 'all');
+      const out: Record<string, unknown> = {};
+      if (job === 'decay' || job === 'all') {
+        const { runDecay } = await import('../memory/maintenance/decay.js');
+        out.decay = await runDecay();
+      }
+      if (job === 'noise' || job === 'all') {
+        const { runNoiseScan } = await import('../memory/maintenance/dedupe.js');
+        out.noise = await runNoiseScan();
+      }
+      if (job === 'dedupe' || job === 'all') {
+        const { runDedupe } = await import('../memory/maintenance/dedupe.js');
+        out.dedupe = await runDedupe();
+      }
+      if (job === 'timeline' || job === 'all') {
+        const { runTimelineBuild } = await import('../memory/timeline/build.js');
+        const { invalidateTimelineCache } = await import('../memory/timeline/render.js');
+        await runTimelineBuild();
+        invalidateTimelineCache();
+        out.timeline = 'built';
+      }
+      return res.json({ ok: true, job, out });
+    } catch (err) {
+      log.error('养护任务手动执行失败', errFields(err));
+      return res.status(500).json({ ok: false, ...errFields(err) });
+    }
+  });
+
+  app.get('/admin/timeline', requireToken, async (_req, res) => {
+    try {
+      const { getTimelineLines } = await import('../memory/timeline/render.js');
+      res.json({ lines: await getTimelineLines() });
+    } catch (err) {
+      res.status(500).json(errFields(err));
+    }
+  });
+
   app.post('/chat', requireToken, async (req, res) => {
     try {
       const body = (req.body ?? {}) as { message?: string; sessionId?: string; endSession?: boolean };
