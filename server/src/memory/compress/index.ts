@@ -175,13 +175,22 @@ export async function compressSlice(slice: SliceMessage[], meta: CompressMeta = 
       raw = await chatJson<unknown>(messages, {
         endpoint: 'cognitive',
         temperature: 0.4,
-        maxTokens: 1600,
+        // 情景记忆正文本身就可能三四百字，加上引语/因果四环/情绪/关键词，
+        // 1600 太小会被截断（实测踩过），给足空间。
+        maxTokens: 4000,
         label: 'compress',
       });
       lastDraft = JSON.stringify(raw);
     } catch (err) {
       log.error('压缩调用失败', { attempt, ...errFields(err) });
-      if (attempt === 2) return { ok: false, violations, attempts: attempt, reason: 'llm-error' };
+      if (attempt === 2) {
+        // 绝不静默丢弃：LLM 层面的失败同样要留案
+        await recordFailure(meta, lastDraft, [
+          ...violations,
+          { code: 'llm_error', detail: String((err as Error)?.message ?? err).slice(0, 300), severity: 'error' },
+        ]);
+        return { ok: false, violations, attempts: attempt, reason: 'llm-error' };
+      }
       continue;
     }
 

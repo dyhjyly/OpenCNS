@@ -1,14 +1,24 @@
-import { config } from './config.js';
-
 /**
  * 极简结构化日志：一行一个 JSON。
  * 不引第三方依赖，但保留 requestId / traceId 这类字段，方便出问题时按 ID 串起来看。
+ *
+ * 刻意**不依赖 config**：否则任何 import 日志器的模块都会触发完整配置校验，
+ * 既没法做单元测试，也导致"配置本身有问题时反而打不出日志"。
+ * 日志级别直接读环境变量，允许非法值回落到 info。
  */
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 const ORDER: Record<LogLevel, number> = { debug: 10, info: 20, warn: 30, error: 40 };
-const THRESHOLD = ORDER[config.logLevel];
+
+function resolveLevel(): LogLevel {
+  const raw = (process.env.LOG_LEVEL ?? 'info').toLowerCase();
+  return (['debug', 'info', 'warn', 'error'] as const).includes(raw as LogLevel)
+    ? (raw as LogLevel)
+    : 'info';
+}
+
+const THRESHOLD = ORDER[resolveLevel()];
 
 export type Fields = Record<string, unknown>;
 
