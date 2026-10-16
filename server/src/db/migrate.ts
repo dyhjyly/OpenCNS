@@ -73,7 +73,18 @@ export async function runMigrations(dir = resolveMigrationsDir()): Promise<Migra
       const previous = appliedMap.get(version);
 
       if (previous !== undefined) {
-        if (previous !== null && previous !== checksum) {
+        if (previous === null) {
+          // 该版本曾被手工用 psql 应用过（文件自身 insert 了 version，没有 checksum）。
+          // 首次由执行器看到时补齐校验和，之后才开始真正校验。
+          await client.query('update schema_migrations set checksum = $2 where version = $1', [
+            version,
+            checksum,
+          ]);
+          log.info('补齐迁移校验和', { version });
+          skipped.push(version);
+          continue;
+        }
+        if (previous !== checksum) {
           throw new Error(
             `迁移 ${version} 已应用但文件内容被改动（校验和不同）。` +
               `迁移只增不改：请把改动写成新的迁移文件。`,
