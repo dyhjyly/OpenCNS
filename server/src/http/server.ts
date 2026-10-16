@@ -4,7 +4,7 @@ import type { Server } from 'node:http';
 import express, { type NextFunction, type Request, type Response } from 'express';
 
 import { config } from '../config.js';
-import { assertDatabaseReady, one } from '../db/pool.js';
+import { assertDatabaseReady, one, query } from '../db/pool.js';
 import { jobStatus } from '../jobs/runner.js';
 import { log, errFields } from '../logger.js';
 

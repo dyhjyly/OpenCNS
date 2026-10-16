@@ -13,7 +13,9 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
-    "sourceMap": true
+    "sourceMap": true,
+    // 编译报错时**不要**产出 JS：否则部署脚本只看"产物存在"就会把坏代码上线
+    "noEmitOnError": true
   },
   "include": ["src/**/*.ts"]
 }
