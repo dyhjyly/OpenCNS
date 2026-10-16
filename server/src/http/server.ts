@@ -151,13 +151,23 @@ export function startHttpServer(): Server {
     }
   });
 
-  app.post('/chat', requireToken, (_req, res) => {
-    /* M3/M4 接入：切段 -> 第一人称压缩 -> 四路召回 -> 主模型 -> 写回欲望 */
-    res.status(501).json({
-      error: 'not_implemented',
-      milestone: 'M3',
-      note: '对话链路尚未接线；当前服务只提供数据库与时钟骨架。',
-    });
+  app.post('/chat', requireToken, async (req, res) => {
+    try {
+      const body = (req.body ?? {}) as { message?: string; sessionId?: string; endSession?: boolean };
+      if (!body.message || !body.message.trim()) {
+        return res.status(400).json({ error: 'message_required' });
+      }
+      const { handleChat } = await import('../chat/index.js');
+      const result = await handleChat({
+        message: body.message,
+        sessionId: body.sessionId,
+        endSession: body.endSession,
+      });
+      return res.json(result);
+    } catch (err) {
+      log.error('对话失败', { requestId: (req as WithId).id, ...errFields(err) });
+      return res.status(500).json({ error: 'chat_failed', requestId: (req as WithId).id });
+    }
   });
 
   app.use((req, res) => {
