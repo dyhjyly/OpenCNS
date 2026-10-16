@@ -155,27 +155,38 @@ export function startHttpServer(): Server {
     /**
      * 手动跑一次养护任务，便于验收与补跑：
      *   { "job": "decay" | "dedupe" | "noise" | "timeline" | "all" }
+     *
+     * 注意：手动执行也要**把任务的下次运行时间往后推**，否则常驻时钟会以为它还没跑过，
+     * 立刻再跑一遍（同一件事跑两次，去重这种任务尤其不希望）。
      */
     try {
       const job = String((req.body as { job?: string })?.job ?? 'all');
       const out: Record<string, unknown> = {};
+      const bump = async (key: string) => {
+        await query(`update jobs set next_run_at = now() + interval '1 hour' where job_key = $1`, [key]);
+      };
+
       if (job === 'decay' || job === 'all') {
         const { runDecay } = await import('../memory/maintenance/decay.js');
         out.decay = await runDecay();
+        await bump('decay');
       }
       if (job === 'noise' || job === 'all') {
         const { runNoiseScan } = await import('../memory/maintenance/dedupe.js');
         out.noise = await runNoiseScan();
+        await bump('noise_scan');
       }
       if (job === 'dedupe' || job === 'all') {
         const { runDedupe } = await import('../memory/maintenance/dedupe.js');
         out.dedupe = await runDedupe();
+        await bump('dedupe');
       }
       if (job === 'timeline' || job === 'all') {
         const { runTimelineBuild } = await import('../memory/timeline/build.js');
         const { invalidateTimelineCache } = await import('../memory/timeline/render.js');
         await runTimelineBuild();
         invalidateTimelineCache();
+        await bump('timeline_build');
         out.timeline = 'built';
       }
       return res.json({ ok: true, job, out });
