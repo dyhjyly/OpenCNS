@@ -45,8 +45,9 @@ expect_ok() { # expect_ok <用例名> <sql>
 }
 
 echo "=== 硬约束①：情景记忆必须带直接引语 ==="
+# 注意：给一个合法的 causal，确保本用例**只**违反引语约束
 expect_error "T1 无引语应被拒" \
-  "insert into memory_items (kind, content) values ('episode', '$LONG');" \
+  "insert into memory_items (kind, content, causal) values ('episode', '$LONG', '$VALID_CAUSAL'::jsonb);" \
   "episode_requires_quote"
 
 echo "=== 硬约束②：因果链四环齐全 ==="
