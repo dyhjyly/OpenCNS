@@ -124,6 +124,33 @@ export function startHttpServer(): Server {
     }
   });
 
+  app.post('/admin/compress', requireToken, async (req, res) => {
+    /**
+     * 手动触发压缩，便于验收与补跑：
+     *   { "sessionId": "...", "keepRecent": 20 }  只压这一个会话
+     *   { "pendingOnly": true }                   扫一遍所有有待压缩内容的会话
+     */
+    try {
+      const body = (req.body ?? {}) as { sessionId?: string; keepRecent?: number; pendingOnly?: boolean };
+      if (body.sessionId) {
+        const { compressOutOfWindow, compressWholeSession } = await import('../memory/compress/pipeline.js');
+        const result =
+          body.keepRecent === 0
+            ? await compressWholeSession(body.sessionId)
+            : await compressOutOfWindow(body.sessionId, body.keepRecent);
+        return res.json({ ok: true, results: [result] });
+      }
+      const { compressOutOfWindow: run, findSessionsWithPending } = await import('../memory/compress/pipeline.js');
+      const pending = await findSessionsWithPending(5);
+      const results = [];
+      for (const s of pending) results.push(await run(s.session_id));
+      return res.json({ ok: true, pending: pending.length, results });
+    } catch (err) {
+      log.error('手动压缩失败', errFields(err));
+      return res.status(500).json({ ok: false, ...errFields(err) });
+    }
+  });
+
   app.post('/chat', requireToken, (_req, res) => {
     /* M3/M4 接入：切段 -> 第一人称压缩 -> 四路召回 -> 主模型 -> 写回欲望 */
     res.status(501).json({

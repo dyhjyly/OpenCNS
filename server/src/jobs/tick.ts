@@ -1,6 +1,7 @@
 import os from 'node:os';
 
 import { log, errFields } from '../logger.js';
+import { compressOutOfWindow, findSessionsWithPending } from '../memory/compress/pipeline.js';
 import { dispatchPending } from '../push/index.js';
 import { ensureJobs, runDueJobs, type JobDefinition } from './runner.js';
 
@@ -50,6 +51,21 @@ function buildJobs(): JobDefinition[] {
       async run() {
         const r = await dispatchPending(10);
         if (r.sent || r.failed) log.info('投递队列', r);
+      },
+    },
+    {
+      // M3：滑出窗口的对话 -> 第一人称情景记忆
+      key: 'compress_queue',
+      kind: 'memory',
+      everyMs: 5 * 60_000,
+      async run() {
+        const sessions = await findSessionsWithPending(2);
+        if (sessions.length === 0) return;
+        log.info('发现待压缩会话', { sessions: sessions.map((s) => `${s.session_id.slice(0, 8)}+${s.pending}`) });
+        for (const s of sessions) {
+          const r = await compressOutOfWindow(s.session_id);
+          log.info('会话压缩结果', r);
+        }
       },
     },
   ];

@@ -12,7 +12,7 @@ const THRESHOLD = ORDER[config.logLevel];
 
 export type Fields = Record<string, unknown>;
 
-function write(level: LogLevel, msg: string, fields: Fields | undefined, base: Fields) {
+function write(level: LogLevel, msg: string, fields: object | undefined, base: Fields) {
   if (ORDER[level] < THRESHOLD) return;
 
   const line: Fields = {
@@ -20,7 +20,7 @@ function write(level: LogLevel, msg: string, fields: Fields | undefined, base: F
     level,
     msg,
     ...base,
-    ...(fields ?? {}),
+    ...(fields as Fields | undefined),
   };
 
   let text: string;
@@ -35,21 +35,27 @@ function write(level: LogLevel, msg: string, fields: Fields | undefined, base: F
 }
 
 export interface Logger {
-  debug(msg: string, fields?: Fields): void;
-  info(msg: string, fields?: Fields): void;
-  warn(msg: string, fields?: Fields): void;
-  error(msg: string, fields?: Fields): void;
+  debug(msg: string, fields?: object): void;
+  info(msg: string, fields?: object): void;
+  warn(msg: string, fields?: object): void;
+  error(msg: string, fields?: object): void;
   /** 派生一个带固定字段的子 logger（例如 requestId、job_key） */
-  child(base: Fields): Logger;
+  child(base: object): Logger;
 }
 
+/**
+ * 参数刻意写成 `object` 而不是 `Record<string, unknown>`：
+ * TypeScript 只给类型字面量隐式索引签名，**interface 没有**，
+ * 于是 `log.info('x', someInterfaceValue)` 会报 TS2345。
+ * 日志参数没必要那么严，放宽到 object，内部做一次断言。
+ */
 export function createLogger(base: Fields = {}): Logger {
   return {
     debug: (msg, fields) => write('debug', msg, fields, base),
     info: (msg, fields) => write('info', msg, fields, base),
     warn: (msg, fields) => write('warn', msg, fields, base),
     error: (msg, fields) => write('error', msg, fields, base),
-    child: (extra) => createLogger({ ...base, ...extra }),
+    child: (extra) => createLogger({ ...base, ...(extra as Fields) }),
   };
 }
 
