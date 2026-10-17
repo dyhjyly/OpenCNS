@@ -180,12 +180,6 @@ export async function decideAndAct(input: {
     await query(`insert into surprises (content) values ($1)`, [surprise]);
   }
 
-  // 他自己的朋友圈：只有他能发。写了 share 才发，不写就不发。
-  if (share) {
-    const { postFromWake } = await import('../social/moments.js');
-    momentId = (await postFromWake({ content: share, mood: null })) ?? undefined;
-  }
-
   // 拍一拍：很轻的一次接触，不占主动消息的次数。
   // 但也别每次醒来都拍 —— 6 小时内拍过就算了，否则就从"轻"变成"吵"。
   if (wantsPat) {
@@ -209,6 +203,18 @@ export async function decideAndAct(input: {
       : decision === 'reach_out' && message
         ? `我醒来，没看见她，于是给她发了一句「${message}」。发完就坐在那儿等。`
         : null;
+
+  /*
+   * 他自己的朋友圈 —— 只有他能发。
+   * 他写了 share 就用 share；没写但这次真的做了点东西（own_work），
+   * 就用他写的 did 发出去 —— "醒来做了事就发一条"本来就该是自然的事，
+   * 全靠他自己想起来写 share 的话，朋友圈会一直是空的。
+   */
+  const shareText = share || (decision === 'own_work' && experienceText ? experienceText : '');
+  if (shareText) {
+    const { postFromWake } = await import('../social/moments.js');
+    momentId = (await postFromWake({ content: shareText, mood: null })) ?? undefined;
+  }
 
   if (decision !== 'stay_quiet' && experienceText) {
     const row = await one<{ id: string }>(
