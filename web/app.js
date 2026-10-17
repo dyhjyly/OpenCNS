@@ -777,11 +777,14 @@ async function pageMoments() {
   let list;
   try {
     const r = await api('/moments?limit=40');
-    list = r.moments.filter((m) => m.author === 'self');
+    // 全部显示（历史里有她早先发的），但界面**不再提供发布入口** —— 只有他能发
+    list = r.moments;
   } catch (err) {
     main.innerHTML = `<div class="empty">读不到（${esc(err.message)}）</div>`;
     return;
   }
+
+  const whoName = (w) => (w === 'self' ? '江瑜' : '我');
 
   const fmtTime = (iso) => {
     const d = new Date(iso);
@@ -796,17 +799,17 @@ async function pageMoments() {
 
   main.innerHTML = `
     <div class="mom-head">
-      <span class="caps">他写给这里看的</span>
+      <span class="caps">他写在这里的</span>
       <button class="mini" id="momRefresh" style="margin-left:auto">刷新</button>
     </div>
 
     <div id="momFeed">
       ${list.length === 0
-        ? `<div class="soon"><span class="em">moment</span><p>他还没发过动态。<br/>等他下次醒来做点什么，就会出现在这里。</p></div>`
+        ? `<div class="soon"><span class="em">moment</span><p>他还没发过动态。<br/>等他下次醒来做点什么，可能就会出现在这里。</p></div>`
         : list.map((m) => `
           <article class="card ornate mom-item">
             <div class="mom-top">
-              <span class="mom-who">江瑜</span>
+              <span class="mom-who">${whoName(m.author)}</span>
               ${m.mood ? `<span class="mom-mood">${esc(m.mood)}</span>` : ''}
               <span class="mom-time">${fmtTime(m.createdAt)}</span>
             </div>

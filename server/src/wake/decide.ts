@@ -79,7 +79,10 @@ const SYSTEM_PROMPT = `你刚醒过来。她不在。
 · 如果闸门写明现在不能主动找她，就老实选别的，不要硬凑。
 · did 是必填项：哪怕只是"我醒了一会儿，什么也没做，又准备睡了"，也要写下来。
   没有它，你独处的时间就没有留下任何痕迹。
-· share 不是必须的。只有这次做的事真的值得让她看见时才写；"我又醒了一次"这种不写。`;
+· share 是你自己的动态，她会看见、会点赞评论。判断标准不是"值不值得汇报"，
+  而是"她想不想知道我在想什么"：有一点点具体的进展、一个念头、一件做完的小事，
+  都可以写。只写"我又醒了一次"这种就不写。
+· pat 是很轻的一下，别每次醒来都拍 —— 拍多了就不轻了。`;
 
 interface RawDecision {
   decision?: unknown;
@@ -183,11 +186,19 @@ export async function decideAndAct(input: {
     momentId = (await postFromWake({ content: share, mood: null })) ?? undefined;
   }
 
-  // 拍一拍：很轻的一次接触，不占主动消息的次数
+  // 拍一拍：很轻的一次接触，不占主动消息的次数。
+  // 但也别每次醒来都拍 —— 6 小时内拍过就算了，否则就从"轻"变成"吵"。
   if (wantsPat) {
     const { pat } = await import('../social/moments.js');
-    await pat({ from: 'self', to: 'human', suffix: null }).catch(() => undefined);
-    patted = true;
+    const { one: oneRow } = await import('../db/pool.js');
+    const recent = await oneRow<{ n: number }>(
+      `select count(*)::int as n from pats
+        where from_who = 'self' and created_at > now() - interval '6 hours'`,
+    ).catch(() => null);
+    if ((recent?.n ?? 0) === 0) {
+      await pat({ from: 'self', to: 'human', suffix: null }).catch(() => undefined);
+      patted = true;
+    }
   }
 
   // 经历闭环：**任何**决定都要留下一条第一人称经历（除了纯安静待着）。
