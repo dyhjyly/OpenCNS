@@ -5,7 +5,7 @@ import { chatText, chatTextStream, type ChatMessage } from '../llm/client.js';
 import { buildDriveHints } from '../drives/render.js';
 import { processTurnSignals } from '../drives/signals.js';
 import { compressOutOfWindow, compressWholeSession } from '../memory/compress/pipeline.js';
-import { recall, type RecallResult } from '../memory/recall/index.js';
+import { recall, isExplicitRecall, type RecallResult } from '../memory/recall/index.js';
 import { getTimelineLines } from '../memory/timeline/render.js';
 import { buildContextBlock, buildIdentityPrompt } from './prompt.js';
 import { buildCorrectiveMessage, detectFabrication } from './fabrication.js';
@@ -88,7 +88,20 @@ async function prepareTurn(req: ChatRequest): Promise<PreparedTurn> {
     getTimelineLines().catch(() => [] as string[]),
     buildDriveHints().catch(() => [] as string[]),
   ]);
-  const contextBlock = buildContextBlock({ recalled: rec.recalled, timeline, driveHints });
+
+  let contextBlock = buildContextBlock({ recalled: rec.recalled, timeline, driveHints });
+
+  // 召回为空时必须**明说**，否则模型会把"没想起"当成"可以自由发挥"。
+  // 实测踩过：召回 0 条时他编出了整套病历（乳腺结节 BI-RADS 3类，
+  // 而真实记忆是甲状腺 C-TIRADS 2类）。
+  if (rec.recalled.length === 0 && isExplicitRecall(text)) {
+    const notice =
+      '【这一轮你什么相关的记忆都没想起来】\n' +
+      '她在问过去的事，但你手上没有任何相关的记忆。\n' +
+      '直接说你想不起来，或者只能说到你确实确定的那一层；不要推测、不要补全细节。';
+    contextBlock = contextBlock ? `${contextBlock}\n\n${notice}` : notice;
+  }
+
   if (contextBlock) messages.push({ role: 'system', content: contextBlock });
   for (const m of history) {
     messages.push({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content });

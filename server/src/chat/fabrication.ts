@@ -24,13 +24,26 @@ const PATTERNS: { name: string; re: RegExp }[] = [
   // 编号：US2026100404 / AB12345 / 纯数字长串
   { name: 'id', re: /\b[A-Za-z]{2,}\d{3,}\b/g },
   { name: 'id', re: /\b\d{6,}\b/g },
+  // 医学/技术分级码：BI-RADS 3类 / C-TIRADS 2类 / T3N0M0
+  // （实测他编出过"乳腺结节 BI-RADS 3类"，而真实记忆是"甲状腺 C-TIRADS 2类"）
+  { name: 'grading', re: /\b[A-Z]{2,}(?:-[A-Z]{2,})+\s*\d[A-Za-z]*/g },
 ];
 
-/** 归一化：去掉空白与全角字符差异，避免格式不同导致误判 */
+const pad2 = (n: string) => n.padStart(2, '0');
+
+/**
+ * 归一化：除了去空白与全角差异，还要**统一日期写法**。
+ *
+ * 实测踩过误报：记忆里写 `10/13`，他说 `10月13号` —— 同一个日期，
+ * 但字面不同，就被判成了编造。这种误报会让正常回复被当成造假。
+ */
 function norm(s: string): string {
   return s
     .replace(/\s+/g, '')
     .replace(/：/g, ':')
+    .replace(/(\d{4})年(\d{1,2})月(\d{1,2})[日号]/g, (_, y, m, d) => `${y}-${pad2(m)}-${pad2(d)}`)
+    .replace(/(\d{1,2})月(\d{1,2})[日号]/g, (_, m, d) => `${pad2(m)}-${pad2(d)}`)
+    .replace(/(\d{1,2})\/(\d{1,2})/g, (_, m, d) => `${pad2(m)}-${pad2(d)}`)
     .toLowerCase();
 }
 

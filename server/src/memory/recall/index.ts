@@ -96,6 +96,31 @@ function queryTokens(text: string): string[] {
   return [...out].slice(0, 24);
 }
 
+/**
+ * 从"回忆类问句"里剥出真正有信息量的词。
+ *
+ * 剥掉回忆意图词与虚词（它们几乎出现在每条记忆的检索里，只会带来噪声），
+ * 剩下的话再切成 2-gram —— 因为记忆里的写法未必连续：
+ *   她说「彩超报告」，记忆里是「做彩超，报告：…」，整词匹配会漏。
+ * 切成「彩超」「超报」「报告」就能命中。
+ */
+function contentWords(text: string): string[] {
+  const stripped = text.replace(
+    /(还?记得吗|还?记得|记不记得|想不起来|想起|回想|回忆|之前|以前|过去|当时|那次|上次|我们说过|我们聊过|我们决定|告诉我|说一下|是什么|什么|怎么样|那个|这个|是不是|有没有|具体|情况|事情|吗|呢|吧|啊|的|了|是|我|你|他|她|它|说)/g,
+    ' ',
+  );
+
+  const out = new Set<string>();
+  for (const run of stripped.split(/[^\u4e00-\u9fa5]+/)) {
+    if (run.length < 2) continue;
+    // 整词（≥3 字的保留，作为更强的匹配）
+    if (run.length >= 3) out.add(run);
+    // 2-gram
+    for (let i = 0; i + 2 <= run.length; i++) out.add(run.slice(i, i + 2));
+  }
+  return [...out].slice(0, 10);
+}
+
 interface Row {
   id: string;
   kind: string;
@@ -107,8 +132,7 @@ interface Row {
   event_time: string | null;
   ingested_at: string;
   similarity: number | null;
-  cooldown_until: string | null;
-}
+  cooldown_until: string | null;}
 
 const SELECT_COLS = `id, kind, content, quotes, emotion_valence, emotion_arousal,
                      importance, event_time, ingested_at, cooldown_until`;
@@ -139,9 +163,28 @@ async function routeKeyword(text: string, tokens: string[], limit: number): Prom
   );
 }
 
+/** F 正文词命中：她用的词真的出现在某条记忆里，就该被捞出来（只在明确回忆时跑）。
+ *
+ * 为什么需要它：日记式的长记忆（三五百字讲一整天的所有事）和一句短问句的
+ * 向量相似度天然偏低，而"复查""医院"这些词明明就在那条记忆里。
+ * 实测踩过：问"上次复查结果"，向量路与近因路都没捞到，于是召回了 0 条。
+ */
+async function routeContentMatch(words: string[], limit: number): Promise<Row[]> {
+  if (words.length === 0) return [];
+  const patterns = words.map((w) => `%${w}%`);
+  return many<Row>(
+    `select ${SELECT_COLS}, 0.5::real as similarity
+       from memory_items
+      where state in ('active','archived')
+        and content like any($1::text[])
+      order by importance desc, coalesce(event_time, ingested_at) desc
+      limit $2`,
+    [patterns, limit],
+  );
+}
+
 /** C 情绪相似（需过门控）。mood 用最近几条情景记忆的情绪均值当"此刻的心情"代理。 */
-async function routeEmotion(limit: number): Promise<Row[]> {
-  const mood = await many<{ v: number; a: number }>(
+async function routeEmotion(limit: number): Promise<Row[]> {  const mood = await many<{ v: number; a: number }>(
     `select avg(emotion_valence)::real as v, avg(emotion_arousal)::real as a
        from (
          select emotion_valence, emotion_arousal
@@ -194,7 +237,14 @@ function recencyScore(ingestedAt: string): number {
 
 export async function recall(userMessage: string, opts: { limit?: number } = {}): Promise<RecallResult> {
   const limit = opts.limit ?? MAX_RECALLED;
-  const byRoute: Record<string, number> = { semantic: 0, keyword: 0, emotion: 0, association: 0 };
+  const byRoute: Record<string, number> = {
+    semantic: 0,
+    keyword: 0,
+    emotion: 0,
+    association: 0,
+    recency: 0,
+    content: 0,
+  };
   const empty: RecallResult = {
     recalled: [],
     candidates: 0,
@@ -216,7 +266,9 @@ export async function recall(userMessage: string, opts: { limit?: number } = {})
     const provider = getEmbeddingProvider();
     const [embedding] = await provider.embed([userMessage]);
     if (!embedding) throw new Error('查询向量为空');
-    semanticRows = await routeSemantic(embedding, 16);
+    // 明确回忆时放宽到 24 条：她说"上次…"就是在找一条很具体的记忆，
+    // 候选太少会让它错过排在 15~24 名的那条。
+    semanticRows = await routeSemantic(embedding, explicit ? 24 : 16);
     byRoute.semantic = semanticRows.length;
   } catch (err) {
     log.error('语义召回失败', errFields(err));
@@ -242,6 +294,19 @@ export async function recall(userMessage: string, opts: { limit?: number } = {})
     }
   }
 
+  // F 正文词命中（明确回忆时）
+  let contentRows: Row[] = [];
+  if (explicit) {
+    try {
+      const words = contentWords(userMessage);
+      contentRows = await routeContentMatch(words, 10);
+      byRoute.content = contentRows.length;
+      if (words.length > 0) log.debug('正文词命中候选', { words, hits: contentRows.length });
+    } catch (err) {
+      log.error('正文词召回失败', errFields(err));
+    }
+  }
+
   // D 联想（用语义前几条当种子）
   let assocRows: Row[] = [];
   try {
@@ -252,6 +317,33 @@ export async function recall(userMessage: string, opts: { limit?: number } = {})
     byRoute.association = assocRows.length;
   } catch (err) {
     log.error('联想召回失败', errFields(err));
+  }
+
+  /*
+   * E 最近发生（只在明确回忆时跑）
+   *
+   * 她说"上次…"时，最该想起的往往是**最近那几件相关的事**，而语义相似度
+   * 未必把它们排上来（日记式长记忆和一句短问句的向量相似度天然偏低）。
+   * 实测踩过：问"上次复查结果"，召回 0 条，模型就把整个病史编了出来。
+   * 这一路不参与裁决的取舍权，只是把最近的高重要度记忆**放进候选池**，
+   * 让裁决器有机会看到它们。
+   */
+  let recencyRows: Row[] = [];
+  if (explicit) {
+    try {
+      recencyRows = await many<Row>(
+        `select ${SELECT_COLS}, 0.3::real as similarity
+           from memory_items
+          where state in ('active','archived')
+            and importance >= 0.5
+            and embedding is not null
+          order by coalesce(event_time, ingested_at) desc
+          limit 12`,
+      );
+      byRoute.recency = recencyRows.length;
+    } catch (err) {
+      log.error('最近记忆召回失败', errFields(err));
+    }
   }
 
   // 合并去重
@@ -273,6 +365,8 @@ export async function recall(userMessage: string, opts: { limit?: number } = {})
   add(keywordRows, 'keyword');
   add(emotionRows, 'emotion');
   add(assocRows, 'association');
+  add(recencyRows, 'recency');
+  add(contentRows, 'content');
 
   // 两层克制：冷却过滤
   //
@@ -313,7 +407,44 @@ export async function recall(userMessage: string, opts: { limit?: number } = {})
   }
 
   candidates.sort((a, b) => b.score - a.score);
-  const top = candidates.slice(0, MAX_CANDIDATES);
+
+  /*
+   * 选谁去裁决。
+   *
+   * 明确回忆时**按路线保额取样**，而不是简单取综合分前 N。
+   * 实测踩过：她问"上次复查结果"，content 路明明找到了 10 条含"复查"的记忆，
+   * 但综合分排序时被语义路的 24 条挤出前 12，裁决器压根没看到那条真记忆，
+   * 于是全拒、召回 0 条。
+   */
+  const top: RecallCandidate[] = [];
+  const picked = new Set<string>();
+  const takeRoute = (route: string, quota: number) => {
+    for (const c of candidates) {
+      if (top.length >= MAX_CANDIDATES || quota <= 0) return;
+      if (picked.has(c.id) || !c.routes.includes(route)) continue;
+      top.push(c);
+      picked.add(c.id);
+      quota--;
+    }
+  };
+
+  if (explicit) {
+    takeRoute('content', 6);
+    takeRoute('keyword', 4);
+    takeRoute('semantic', 6);
+    takeRoute('recency', 3);
+    takeRoute('association', 2);
+    takeRoute('emotion', 2);
+    for (const c of candidates) {
+      if (top.length >= MAX_CANDIDATES) break;
+      if (!picked.has(c.id)) {
+        top.push(c);
+        picked.add(c.id);
+      }
+    }
+  } else {
+    top.push(...candidates.slice(0, MAX_CANDIDATES));
+  }
 
   if (top.length === 0) {
     return { ...empty, byRoute, droppedByCooldown, emotionRouteAllowed: explicit };

@@ -166,6 +166,24 @@ check('普通回复不误报', () => {
   if (r.suspicious.length !== 0) throw new Error('误报了：' + r.suspicious.join(','));
 });
 
+check('日期写法不同不算编造（记忆 10/13，他说 10月13号）', () => {
+  const c2 = '10/13林遇去医院查甲状腺，约的10:00-10:30。';
+  const r = detectFabrication('我记得你10月13号要去查甲状腺。', c2);
+  if (r.suspicious.length !== 0) throw new Error('误报了：' + r.suspicious.join(','));
+});
+
+check('日期真的不同仍然抓到（记忆 10/13，他说 10月14号）', () => {
+  const c2 = '10/13林遇去医院查甲状腺。';
+  const r = detectFabrication('你10月14号去查的甲状腺。', c2);
+  if (r.suspicious.length === 0) throw new Error('漏检了');
+});
+
+check('医学分级码编造能抓到（BI-RADS vs C-TIRADS）', () => {
+  const c3 = '甲状腺 C-TIRADS 2类（良性）。';
+  const r = detectFabrication('报告是乳腺 BI-RADS 3类。', c3);
+  if (r.suspicious.length === 0) throw new Error('漏检了');
+});
+
 console.log('');
 console.log(`结果：${pass} 通过 / ${fail} 失败`);
 process.exit(fail === 0 ? 0 : 1);
