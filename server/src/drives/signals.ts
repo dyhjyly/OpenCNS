@@ -69,7 +69,8 @@ export async function processTurnSignals(herMessage: string, hisReply: string): 
           ].join('\n'),
         },
       ],
-      { endpoint: 'cognitive', temperature: 0.2, maxTokens: 700, label: 'drive-signals' },
+      // 推理型模型会把预算花在"思考"上，正文因此可能为空 —— 给足空间（700 实测被吃光）
+      { endpoint: 'cognitive', temperature: 0.2, maxTokens: 2000, label: 'drive-signals' },
     );
 
     const deltas = (Array.isArray(raw.deltas) ? raw.deltas : [])

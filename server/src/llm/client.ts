@@ -52,6 +52,8 @@ export class TruncatedOutputError extends Error {
 }
 
 const MAX_TOKENS_CEILING = 8000;
+/** 推理型模型会把预算花在"思考"上，所以默认上限要够高（实测 700 会被吃光、正文返回空） */
+const DEFAULT_MAX_TOKENS = 2048;
 
 async function callOnce(
   ep: LlmEndpoint,
@@ -72,7 +74,7 @@ async function callOnce(
       model: opts.model ?? ep.model,
       messages,
       temperature: opts.temperature ?? 0.3,
-      max_tokens: opts.maxTokens ?? 2048,
+      max_tokens: opts.maxTokens ?? DEFAULT_MAX_TOKENS,
       stream: false,
     }),
     signal: AbortSignal.timeout(opts.timeoutMs ?? 120_000),
@@ -86,8 +88,18 @@ async function callOnce(
   const json = (await res.json()) as CompletionResponse;
   const choice = json.choices?.[0];
   const text = choice?.message?.content ?? '';
+  const reasoning = choice?.message?.reasoning_content ?? '';
+
   if (!text.trim()) {
-    throw new Error('模型返回了空正文（拒绝把 reasoning_content 当正文使用）');
+    // 推理型模型会把 max_tokens 花在"思考"上，正文因此为空。
+    // 这不是"模型没说话"，而是**预算不够** —— 必须当成截断走高预算重试，
+    // 否则整条链路会静默失效（实测踩过：欲望信号识别每一轮都失败）。
+    if (choice?.finish_reason === 'length' || reasoning.length > 0) {
+      throw new TruncatedOutputError(reasoning.length);
+    }
+    // 真正的空回复：宁可报错，也**绝不**把 reasoning_content 当正文用
+    //（旧代码这么干过，等于把思维链当成回复写进记忆）。
+    throw new Error('模型返回了空正文');
   }
   if (choice?.finish_reason === 'length') {
     throw new TruncatedOutputError(text.length);
@@ -98,7 +110,7 @@ async function callOnce(
 export async function chatText(messages: ChatMessage[], opts: ChatOptions = {}): Promise<string> {
   const ep = pick(opts);
   const retries = opts.retries ?? 2;
-  let maxTokens = opts.maxTokens ?? 2048;
+  let maxTokens = opts.maxTokens ?? DEFAULT_MAX_TOKENS;
   let lastErr: unknown;
 
   for (let attempt = 0; attempt <= retries; attempt++) {

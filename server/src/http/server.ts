@@ -229,20 +229,11 @@ export function startHttpServer(): Server {
         if (!body.key || typeof body.value !== 'number') {
           return res.status(400).json({ error: 'key_and_value_required' });
         }
-        const { applyDeltas } = await import('../drives/state.js');
-        const { getDrive } = await import('../drives/state.js');
-        const current = await getDrive(body.key);
-        if (!current) return res.status(404).json({ error: 'unknown_drive', key: body.key });
-        // 手工设置走"差值"，因此同样受限幅约束
-        const applied = await applyDeltas([
-          {
-            key: body.key,
-            delta: body.value - current.value,
-            reasonCode: 'manual',
-            reasonText: body.reason ?? '手工设置（验收用）',
-            source: 'manual',
-          },
-        ]);
+        // 直接设定，不走单轮限幅（限幅是"每一轮对话"的纪律；手工设置不是一轮对话，
+        // 否则要把它推到 0.9 得调用六次，验收根本没法做）
+        const { setDriveValue } = await import('../drives/state.js');
+        const applied = await setDriveValue(body.key, body.value, body.reason ?? '手工设置（验收用）');
+        if (!applied) return res.status(404).json({ error: 'unknown_drive', key: body.key });
         return res.json({ ok: true, applied });
       }
       return res.status(400).json({ error: 'unknown_action' });

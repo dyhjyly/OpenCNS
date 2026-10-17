@@ -154,3 +154,42 @@ export async function driftTowardBaseline(elapsedMinutes: number, ratePerMinute:
   }
   return changed;
 }
+
+/**
+ * 直接设定某一维的值（只给运维/验收用）。
+ *
+ * 刻意**不走** applyDeltas 的单轮限幅：限幅是给"每一轮对话"定的纪律，
+ * 而手工设置不是一轮对话。但它同样必须留下 drive_events —— 任何数值变化
+ * 都要能回答"为什么变成这样"，人工改动也不例外。
+ */
+export async function setDriveValue(
+  key: string,
+  value: number,
+  reason: string,
+): Promise<{ key: string; from: number; to: number } | null> {
+  const def = DRIVE_BY_KEY.get(key);
+  if (!def) return null;
+
+  const target = Math.max(0, Math.min(1, value));
+  const current = await getDrive(key);
+  if (!current) return null;
+
+  const from = Number(current.value);
+  const delta = Number((target - from).toFixed(4));
+
+  await query(
+    `update drive_state
+        set value = $2, trend = $3, last_reason_code = 'manual', last_reason_text = $4, updated_at = now()
+      where drive_key = $1`,
+    [key, target, delta, reason],
+  );
+
+  await query(
+    `insert into drive_events (drive_key, delta, value_after, reason_code, reason_text, source, evidence)
+     values ($1, $2, $3, 'manual', $4, 'manual', '{"note":"手工设置（运维/验收）"}'::jsonb)`,
+    [key, delta, target, reason],
+  );
+
+  log.info('欲望被手工设定', { key, from, to: target, reason });
+  return { key, from, to: target };
+}
