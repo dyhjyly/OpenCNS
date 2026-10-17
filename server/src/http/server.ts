@@ -196,6 +196,61 @@ export function startHttpServer(): Server {
     }
   });
 
+  app.get('/admin/drives', requireToken, async (_req, res) => {
+    try {
+      const { getFullSnapshot, buildDriveHints } = await import('../drives/render.js');
+      const { checkProactiveGates } = await import('../drives/gates.js');
+      const hints = await buildDriveHints();
+      res.json({
+        drives: await getFullSnapshot(),
+        gates: await checkProactiveGates(),
+        // 实际注入模型的那几行（应当**不含任何数字**）
+        injectedHints: hints,
+        hintsContainDigits: /\d/.test(hints.join(' ')),
+      });
+    } catch (err) {
+      res.status(500).json(errFields(err));
+    }
+  });
+
+  app.post('/admin/drives', requireToken, async (req, res) => {
+    /**
+     * 手动推一下欲望的时间侧（验收用）：
+     *   { "action": "tick" }   跑一次缓动 + 沉默信号 + 脉冲检查
+     *   { "action": "set", "key": "missing", "value": 0.8, "reason": "手工设置" }
+     */
+    try {
+      const body = (req.body ?? {}) as { action?: string; key?: string; value?: number; reason?: string };
+      if (body.action === 'tick' || !body.action) {
+        const { runDriveTick } = await import('../drives/tick.js');
+        return res.json({ ok: true, tick: await runDriveTick() });
+      }
+      if (body.action === 'set') {
+        if (!body.key || typeof body.value !== 'number') {
+          return res.status(400).json({ error: 'key_and_value_required' });
+        }
+        const { applyDeltas } = await import('../drives/state.js');
+        const { getDrive } = await import('../drives/state.js');
+        const current = await getDrive(body.key);
+        if (!current) return res.status(404).json({ error: 'unknown_drive', key: body.key });
+        // 手工设置走"差值"，因此同样受限幅约束
+        const applied = await applyDeltas([
+          {
+            key: body.key,
+            delta: body.value - current.value,
+            reasonCode: 'manual',
+            reasonText: body.reason ?? '手工设置（验收用）',
+            source: 'manual',
+          },
+        ]);
+        return res.json({ ok: true, applied });
+      }
+      return res.status(400).json({ error: 'unknown_action' });
+    } catch (err) {
+      res.status(500).json(errFields(err));
+    }
+  });
+
   app.get('/admin/timeline', requireToken, async (_req, res) => {
     try {
       const { getTimelineLines } = await import('../memory/timeline/render.js');

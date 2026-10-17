@@ -1,5 +1,7 @@
 import { log, errFields } from '../logger.js';
 import { chatText, type ChatMessage } from '../llm/client.js';
+import { buildDriveHints } from '../drives/render.js';
+import { processTurnSignals } from '../drives/signals.js';
 import { compressOutOfWindow, compressWholeSession } from '../memory/compress/pipeline.js';
 import { recall } from '../memory/recall/index.js';
 import { getTimelineLines } from '../memory/timeline/render.js';
@@ -54,9 +56,12 @@ export async function handleChat(req: ChatRequest): Promise<ChatResponse> {
   const history = recent.slice(0, -1); // 去掉刚插入的当前这句
 
   const messages: ChatMessage[] = [{ role: 'system', content: buildIdentityPrompt(actors) }];
-  // 时间树是"第二通道"，每轮固定在场；读取失败不影响对话
-  const timeline = await getTimelineLines().catch(() => [] as string[]);
-  const contextBlock = buildContextBlock({ recalled: rec.recalled, timeline });
+  // 时间树是"第二通道"，欲望是"底色" —— 两者每轮固定在场，读取失败都不影响对话
+  const [timeline, driveHints] = await Promise.all([
+    getTimelineLines().catch(() => [] as string[]),
+    buildDriveHints().catch(() => [] as string[]),
+  ]);
+  const contextBlock = buildContextBlock({ recalled: rec.recalled, timeline, driveHints });
   if (contextBlock) messages.push({ role: 'system', content: contextBlock });
   for (const m of history) {
     messages.push({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content });
@@ -83,6 +88,11 @@ export async function handleChat(req: ChatRequest): Promise<ChatResponse> {
     log.error('后台压缩失败（不影响本轮对话）', errFields(err)),
   );
 
+  // ---- 后台：这一轮对欲望的真实影响。跑在回复之后，因为它只影响下一轮的底色 ----
+  void processTurnSignals(text, reply).catch((err) =>
+    log.error('欲望信号处理失败（不影响本轮对话）', errFields(err)),
+  );
+
   if (req.endSession) {
     await closeSession(sessionId);
     void compressWholeSession(sessionId).catch((err) =>
@@ -100,6 +110,9 @@ export async function handleChat(req: ChatRequest): Promise<ChatResponse> {
     byRoute: rec.byRoute,
     droppedByCooldown: rec.droppedByCooldown,
     judgeUsed: rec.judgeUsed,
+    timelineLines: timeline.length,
+    // 底色注了什么，必须能被看见（否则"欲望如何影响对话"就成了黑箱）
+    driveHintLines: driveHints,
     ...timing,
   });
 

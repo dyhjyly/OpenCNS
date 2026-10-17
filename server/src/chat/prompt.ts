@@ -63,7 +63,13 @@ export function buildContextBlock(input: ContextBlockInput): string {
   }
 
   if (input.driveHints && input.driveHints.length > 0) {
-    parts.push('【此刻的状态】', ...input.driveHints.map((d) => `· ${d}`), '');
+    parts.push(
+      '【此刻的状态】',
+      '（这是你自己的状态，不是要你做什么。可以完全不理它；也可以让它影响你的语气和你想不想说。',
+      '它不会替你说话——要不要说、说什么，是你自己的事。）',
+      ...input.driveHints.map((d) => `· ${d}`),
+      '',
+    );
   }
 
   if (parts.length === 0) return '';

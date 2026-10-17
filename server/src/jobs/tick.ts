@@ -1,6 +1,8 @@
 import os from 'node:os';
 
 import { log, errFields } from '../logger.js';
+import { checkProactiveGates } from '../drives/gates.js';
+import { runDriveTick } from '../drives/tick.js';
 import { runDecay } from '../memory/maintenance/decay.js';
 import { runDedupe, runNoiseScan } from '../memory/maintenance/dedupe.js';
 import { compressOutOfWindow, findSessionsWithPending } from '../memory/compress/pipeline.js';
@@ -107,6 +109,25 @@ function buildJobs(): JobDefinition[] {
       everyMs: 24 * 60 * 60_000,
       async run() {
         await runNoiseScan();
+      },
+    },
+    {
+      // M6：欲望的时间侧。缓动回归 + 沉默信号 + 过夜脉冲
+      key: 'drive_tick',
+      kind: 'drives',
+      everyMs: 5 * 60_000,
+      async run() {
+        await runDriveTick();
+      },
+    },
+    {
+      // M6：闸门自检。只记录"现在允不允许主动找她"，不在这里发起任何行为
+      key: 'gate_check',
+      kind: 'drives',
+      everyMs: 30 * 60_000,
+      async run() {
+        const gate = await checkProactiveGates();
+        log.info('闸门自检', { allowed: gate.allowed, blockedBy: gate.blockedBy, ...gate.stats });
       },
     },
   ];
