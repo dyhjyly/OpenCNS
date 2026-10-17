@@ -76,7 +76,7 @@ export async function applySupersede(newId: string, newContent: string, label = 
           content: `【新记忆】（${label}）\n${newContent.slice(0, 800)}\n\n【已有记忆】\n${list}\n\n新记忆是否取代了其中某几条？只输出 JSON。`,
         },
       ],
-      { endpoint: 'cognitive', temperature: 0.1, maxTokens: 600, label: 'supersede' },
+      { endpoint: 'cognitive', temperature: 0.1, maxTokens: 1500, label: 'supersede' },
     );
 
     const validIds = new Set(relevant.map((c) => c.id));

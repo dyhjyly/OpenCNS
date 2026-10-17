@@ -167,8 +167,13 @@ async function routeEmotion(limit: number): Promise<Row[]> {
 /** D 联想连带：顺着已建好的边，从种子记忆带出邻居 */
 async function routeAssociation(seedIds: string[], limit: number): Promise<Row[]> {
   if (seedIds.length === 0) return [];
+  // 注意：memory_edges 与 memory_items 都有 id，SELECT_COLS 里的裸列名会歧义
+  //（实测报 column reference "id" is ambiguous，这个路由曾每一轮都失败）。
+  // 所以这里显式给 memory_items 的每一列加上 m. 前缀。
   return many<Row>(
-    `select ${SELECT_COLS}, (e.weight * 0.8)::real as similarity
+    `select m.id, m.kind, m.content, m.quotes, m.emotion_valence, m.emotion_arousal,
+            m.importance, m.event_time, m.ingested_at, m.cooldown_until,
+            (e.weight * 0.8)::real as similarity
        from memory_edges e
        join memory_items m on m.id = e.to_id
       where e.from_id = any($1::uuid[])
@@ -268,11 +273,17 @@ export async function recall(userMessage: string, opts: { limit?: number } = {})
   add(assocRows, 'association');
 
   // 两层克制：冷却过滤
+  //
+  // 关键例外：**她在明确问过去的事时，冷却无效**。
+  // 冷却是为了"不要反复主动提起同一条"，不是"问起来也装作想不起来"。
+  // 实测踩过：她问"你还记得上次复查结果吗"，那几条正在冷却里被丢掉，
+  // 系统老老实实回答"这个我没记住"——这是把防复读变成了失忆。
   const now = Date.now();
   let droppedByCooldown = 0;
   const candidates: RecallCandidate[] = [];
   for (const { row, routes, similarity } of merged.values()) {
-    if (row.cooldown_until && new Date(row.cooldown_until).getTime() > now) {
+    const cooling = Boolean(row.cooldown_until && new Date(row.cooldown_until).getTime() > now);
+    if (cooling && !explicit) {
       droppedByCooldown++;
       continue;
     }
@@ -280,7 +291,9 @@ export async function recall(userMessage: string, opts: { limit?: number } = {})
       0.55 * similarity +
       0.25 * (row.importance ?? 0.5) +
       0.12 * recencyScore(row.ingested_at) +
-      0.08 * Math.min(1, routes.length / 3);
+      0.08 * Math.min(1, routes.length / 3) +
+      // 冷却中的记忆即便被放行，也排在后面
+      (cooling ? -0.05 : 0);
     candidates.push({
       id: row.id,
       kind: row.kind,
@@ -323,7 +336,7 @@ export async function recall(userMessage: string, opts: { limit?: number } = {})
         { role: 'system', content: RECALL_JUDGE_SYSTEM_PROMPT },
         { role: 'user', content: buildJudgeUserMessage(userMessage, judgeInput) },
       ],
-      { endpoint: 'cognitive', temperature: 0.1, maxTokens: 800, label: 'recall-judge' },
+      { endpoint: 'cognitive', temperature: 0.1, maxTokens: 2000, label: 'recall-judge' },
     );
     judgeUsed = true;
     judgeReason = verdict.reason;

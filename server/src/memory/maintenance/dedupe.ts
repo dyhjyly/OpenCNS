@@ -76,7 +76,7 @@ export async function runDedupe(): Promise<DedupeResult> {
             ].join('\n'),
           },
         ],
-        { endpoint: 'cognitive', temperature: 0.1, maxTokens: 400, label: 'dedupe' },
+        { endpoint: 'cognitive', temperature: 0.1, maxTokens: 1200, label: 'dedupe' },
       );
 
       if (!verdict.same) continue;

@@ -113,7 +113,7 @@ export async function decideAndAct(input: {
         { role: 'user', content: userMessage },
       ],
       // 这是"他自己在决定"，用对话模型而不是廉价模型；推理型模型要留足预算
-      { endpoint: 'chat', temperature: 0.9, maxTokens: 3000, label: 'wake-decide' },
+      { endpoint: 'chat', temperature: 0.9, maxTokens: 4000, label: 'wake-decide' },
     );
   } catch (err) {
     log.error('唤醒决策失败，本轮保持安静', errFields(err));

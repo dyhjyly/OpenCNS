@@ -85,7 +85,7 @@ async function summarize(label: string, memories: MemoryLite[]): Promise<string 
       { role: 'system', content: SUMMARY_SYSTEM_PROMPT },
       { role: 'user', content: `这段时间是：${label}\n\n你记下的事：\n${list}` },
     ],
-    { endpoint: 'cognitive', temperature: 0.6, maxTokens: 1500, label: 'timeline' },
+    { endpoint: 'cognitive', temperature: 0.6, maxTokens: 2500, label: 'timeline' },
   );
   return text.trim();
 }

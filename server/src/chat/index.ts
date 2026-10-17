@@ -173,7 +173,9 @@ export async function handleChat(req: ChatRequest): Promise<ChatResponse> {
   const reply = await chatText(turn.messages, {
     endpoint: 'chat',
     temperature: 0.8,
-    maxTokens: 1200,
+    // 推理型模型会先花一大截预算在思考上（实测 1200 会被吃光、正文为空），
+    // 所以对话这一层给足空间。
+    maxTokens: 4000,
     label: 'reply',
   });
 
@@ -214,7 +216,7 @@ export async function handleChatStream(req: ChatRequest, res: Response): Promise
   try {
     full = await chatTextStream(
       turn.messages,
-      { endpoint: 'chat', temperature: 0.8, maxTokens: 1200, label: 'reply-stream' },
+      { endpoint: 'chat', temperature: 0.8, maxTokens: 4000, label: 'reply-stream' },
       (delta) => {
         if (firstTokenMs === undefined) firstTokenMs = Date.now() - tLlm;
         send('delta', { t: delta });
