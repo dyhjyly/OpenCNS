@@ -3,6 +3,7 @@ import os from 'node:os';
 import { log, errFields } from '../logger.js';
 import { checkProactiveGates } from '../drives/gates.js';
 import { runDriveTick } from '../drives/tick.js';
+import { runWakeCycle } from '../wake/index.js';
 import { runDecay } from '../memory/maintenance/decay.js';
 import { runDedupe, runNoiseScan } from '../memory/maintenance/dedupe.js';
 import { compressOutOfWindow, findSessionsWithPending } from '../memory/compress/pipeline.js';
@@ -128,6 +129,23 @@ function buildJobs(): JobDefinition[] {
       async run() {
         const gate = await checkProactiveGates();
         log.info('闸门自检', { allowed: gate.allowed, blockedBy: gate.blockedBy, ...gate.stats });
+      },
+    },
+    {
+      // M7：节拍器。每分钟看一次机会窗到没到；
+      // 到窗也未必叫醒模型 —— 三信号全低就零成本跳过（不制造"为了醒而醒"的表演）
+      key: 'wake_cycle',
+      kind: 'wake',
+      everyMs: 60_000,
+      async run() {
+        const result = await runWakeCycle();
+        if (!result.skipped) {
+          log.info('唤醒了一次', {
+            decision: result.outcome?.decision,
+            reason: result.outcome?.reason,
+            outboxQueued: result.outcome?.outboxQueued,
+          });
+        }
       },
     },
   ];

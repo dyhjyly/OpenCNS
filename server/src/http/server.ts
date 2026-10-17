@@ -251,6 +251,39 @@ export function startHttpServer(): Server {
     }
   });
 
+  app.post('/admin/wake', requireToken, async (req, res) => {
+    /**
+     * 手动触发一次唤醒回路，便于验收与补跑：
+     *   { "force": true }  忽略节拍器与"零成本跳过"，强制走完整回路
+     */
+    try {
+      const force = Boolean((req.body as { force?: boolean })?.force);
+      const { runWakeCycle } = await import('../wake/index.js');
+      const result = await runWakeCycle({ force });
+      return res.json({ ok: true, result });
+    } catch (err) {
+      log.error('手动唤醒失败', errFields(err));
+      return res.status(500).json({ ok: false, ...errFields(err) });
+    }
+  });
+
+  app.get('/admin/wake', requireToken, async (_req, res) => {
+    try {
+      const { inspectMetronome } = await import('../wake/metronome.js');
+      const { many } = await import('../db/pool.js');
+      const recent = await many(
+        `select id, created_at, decision, skipped_reason, model_calls
+           from wake_log order by created_at desc limit 10`,
+      );
+      const counts = await many<{ decision: string | null; n: number }>(
+        `select decision, count(*)::int as n from wake_log group by 1 order by 2 desc`,
+      );
+      return res.json({ metronome: await inspectMetronome(), recent, counts });
+    } catch (err) {
+      return res.status(500).json(errFields(err));
+    }
+  });
+
   app.post('/chat', requireToken, async (req, res) => {
     try {
       const body = (req.body ?? {}) as { message?: string; sessionId?: string; endSession?: boolean };
