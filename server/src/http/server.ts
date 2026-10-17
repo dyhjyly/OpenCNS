@@ -260,6 +260,46 @@ export function startHttpServer(): Server {
     }
   });
 
+  app.get('/home', requireToken, async (req, res) => {
+    try {
+      const { getHomeSummary, getWeather } = await import('../home/index.js');
+      const lat = req.query.lat ? Number(req.query.lat) : undefined;
+      const lon = req.query.lon ? Number(req.query.lon) : undefined;
+      const city = typeof req.query.city === 'string' ? req.query.city : undefined;
+
+      const [summary, weather] = await Promise.all([
+        getHomeSummary(),
+        getWeather({
+          lat: Number.isFinite(lat) ? lat : undefined,
+          lon: Number.isFinite(lon) ? lon : undefined,
+          city,
+        }),
+      ]);
+
+      res.json({ ok: true, ...summary, weather });
+    } catch (err) {
+      log.error('主页汇总失败', errFields(err));
+      res.status(500).json(errFields(err));
+    }
+  });
+
+  app.get('/weather', requireToken, async (req, res) => {
+    try {
+      const { getWeather } = await import('../home/index.js');
+      const lat = req.query.lat ? Number(req.query.lat) : undefined;
+      const lon = req.query.lon ? Number(req.query.lon) : undefined;
+      const city = typeof req.query.city === 'string' ? req.query.city : undefined;
+      res.json(await getWeather({ lat: Number.isFinite(lat) ? lat : undefined, lon: Number.isFinite(lon) ? lon : undefined, city }));
+    } catch (err) {
+      res.status(500).json(errFields(err));
+    }
+  });
+
+  app.post('/admin/settings', requireToken, async (_req, res) => {
+    // 有意只接受 PUT：GET 读、PUT 改，避免 POST 被误用成"整份覆盖"
+    return res.status(405).json({ error: 'use_put' });
+  });
+
   app.put('/admin/settings', requireToken, async (req, res) => {
     /**
      * 改模型 / effort / 温度 / 输出上限，立刻生效（不用重启）。
