@@ -8,6 +8,7 @@ import { compressOutOfWindow, compressWholeSession } from '../memory/compress/pi
 import { recall, type RecallResult } from '../memory/recall/index.js';
 import { getTimelineLines } from '../memory/timeline/render.js';
 import { buildContextBlock, buildIdentityPrompt } from './prompt.js';
+import { buildCorrectiveMessage, detectFabrication } from './fabrication.js';
 import {
   appendMessage,
   closeSession,
@@ -56,6 +57,8 @@ interface PreparedTurn {
   sessionId: string;
   recall: RecallResult;
   messages: ChatMessage[];
+  /** 这一轮实际注入给模型的全部文本，用来做编造检测 */
+  contextText: string;
   timelineLines: number;
   driveHints: string[];
   recallMs: number;
@@ -99,6 +102,7 @@ async function prepareTurn(req: ChatRequest): Promise<PreparedTurn> {
     sessionId,
     recall: rec,
     messages,
+    contextText: messages.map((m) => m.content).join('\n'),
     timelineLines: timeline.length,
     driveHints,
     recallMs,
@@ -170,7 +174,7 @@ export async function handleChat(req: ChatRequest): Promise<ChatResponse> {
   const turn = await prepareTurn(req);
 
   const tLlm = Date.now();
-  const reply = await chatText(turn.messages, {
+  let reply = await chatText(turn.messages, {
     endpoint: 'chat',
     temperature: 0.8,
     // 推理型模型会先花一大截预算在思考上（实测 1200 会被吃光、正文为空），
@@ -178,6 +182,31 @@ export async function handleChat(req: ChatRequest): Promise<ChatResponse> {
     maxTokens: 4000,
     label: 'reply',
   });
+
+  // 编造检测：回复里出现上下文里没有的具体信息（时间/日期/编号）就重写一次。
+  // 忘记是遗憾，编造是欺骗——这一条不允许放过。
+  const check = detectFabrication(reply, turn.contextText);
+  if (check.suspicious.length > 0) {
+    log.warn('检测到疑似编造的记忆细节，重写一次', { suspicious: check.suspicious });
+    try {
+      const corrected = await chatText(
+        [...turn.messages, { role: 'assistant', content: reply }, { role: 'user', content: buildCorrectiveMessage(check.suspicious) }],
+        { endpoint: 'chat', temperature: 0.5, maxTokens: 3000, label: 'reply-corrected' },
+      );
+      const recheck = detectFabrication(corrected, turn.contextText);
+      if (recheck.suspicious.length === 0) {
+        log.info('重写后编造已消除', { before: check.suspicious.length });
+        reply = corrected;
+      } else {
+        log.warn('重写后仍有可疑细节，保留重写版并要求它明说记不清', {
+          stillWrong: recheck.suspicious,
+        });
+        reply = corrected;
+      }
+    } catch (err) {
+      log.error('重写失败，保留原回复', errFields(err));
+    }
+  }
 
   return finalizeTurn(turn, reply, { llmMs: Date.now() - tLlm });
 }
@@ -230,7 +259,18 @@ export async function handleChatStream(req: ChatRequest, res: Response): Promise
   }
 
   const llmMs = Date.now() - tLlm;
+
+  // 流式已经吐出去了，收不回来；但必须让前端和她知道"这条里有记不清的成分"。
+  const check = detectFabrication(full, turn.contextText);
+  if (check.suspicious.length > 0) {
+    log.warn('流式回复里有疑似编造的细节（已提示前端）', { suspicious: check.suspicious });
+    send('warning', {
+      message: '这条回复里有记不清却被说具体的成分',
+      suspicious: check.suspicious,
+    });
+  }
+
   const result = await finalizeTurn(turn, full, { llmMs, firstTokenMs });
-  send('done', { ...result, firstTokenMs });
+  send('done', { ...result, firstTokenMs, suspicious: check.suspicious });
   res.end();
 }

@@ -8,6 +8,7 @@
  */
 
 const { extractJson, repairTruncatedJson } = await import('../build/llm/json.js');
+const { detectFabrication } = await import('../build/chat/fabrication.js');
 const { segmentMessages } = await import('../build/memory/compress/segment.js');
 
 let pass = 0;
@@ -128,6 +129,41 @@ check('system 消息被剔除且空内容不算一段', () => {
   ]);
   eq(segs.length, 1);
   eq(segs[0].length, 2);
+});
+
+console.log('');
+console.log('=== 记忆编造检测 ===');
+
+const ctx = '她上次复查：甲状腺大小正常，双侧叶多个小囊性结节约3毫米，C-TIRADS 2类。医生说半年或一年复查一次。';
+
+check('上下文里有 3毫米 -> 不算编造', () => {
+  const r = detectFabrication('你上次报告里那个结节大概3毫米，医生说没事。', ctx);
+  if (r.suspicious.length !== 0) throw new Error('误报了：' + r.suspicious.join(','));
+});
+
+check('编造时间 10:18 -> 抓到', () => {
+  const r = detectFabrication('你那天彩超 10:18 开始做的。', ctx);
+  if (!r.suspicious.includes('10:18')) throw new Error('没抓到，实际：' + JSON.stringify(r));
+});
+
+check('编造日期 10月4号 -> 抓到', () => {
+  const r = detectFabrication('10月4号上午去复查的。', ctx);
+  if (!r.suspicious.includes('10月4号')) throw new Error('没抓到，实际：' + JSON.stringify(r));
+});
+
+check('编造单号 US2026100404 -> 抓到', () => {
+  const r = detectFabrication('报告单号是 US2026100404。', ctx);
+  if (!r.suspicious.some((s) => s.includes('US'))) throw new Error('没抓到，实际：' + JSON.stringify(r));
+});
+
+check('上下文里真有 10:18 时不算编造', () => {
+  const r = detectFabrication('你那天彩超 10:18 开始做的。', ctx + ' 彩超 10:18 到 10:24。');
+  if (r.suspicious.length !== 0) throw new Error('误报了：' + r.suspicious.join(','));
+});
+
+check('普通回复不误报', () => {
+  const r = detectFabrication('嗯，医生说没事就好。半年后再查一次，别去揉脖子。', ctx);
+  if (r.suspicious.length !== 0) throw new Error('误报了：' + r.suspicious.join(','));
 });
 
 console.log('');
