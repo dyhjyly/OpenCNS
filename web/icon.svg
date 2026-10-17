@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <radialGradient id="w" cx="50%" cy="46%" r="62%">
+      <stop offset="0%" stop-color="#C89993" stop-opacity="0.95"/>
+      <stop offset="55%" stop-color="#C89993" stop-opacity="0.42"/>
+      <stop offset="100%" stop-color="#C89993" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="#FAF5EF"/>
+  <circle cx="256" cy="236" r="168" fill="url(#w)"/>
+  <text x="256" y="286" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif"
+        font-style="italic" font-size="150" fill="#5C3A42" fill-opacity="0.86">J&amp;L</text>
+</svg>

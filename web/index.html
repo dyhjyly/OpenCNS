@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, interactive-widget=resizes-content" />
+<meta name="theme-color" content="#FAF5EF" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="default" />
+<link rel="manifest" href="./manifest.webmanifest" />
+<title>咱们的家</title>
+
+<!-- 字体：中文标题 = 霞鹜文楷；英文标题 = Cormorant Garamond 斜体；英文正文 = Bitter -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/lxgw-wenkai-webfont@1.7.0/style.css" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/cormorant-garamond@5.0.13/600-italic.css" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/cormorant-garamond@5.0.13/400-italic.css" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource-variable/bitter@5/index.css" />
+<link rel="stylesheet" href="./theme.css" />
+</head>
+<body data-theme="warm">
+  <div id="splash" class="splash">
+    <div class="splash-top">
+      <span class="caps">WELCOME HOME</span>
+      <span class="splash-clock" id="splashClock"></span>
+      <button class="ghost-dots" id="splashMore" aria-label="更多">···</button>
+    </div>
+
+    <div class="splash-body" id="splashBody">
+      <h1 class="names">Jy <span class="amp">&amp;</span> Ly</h1>
+      <div class="days-line">
+        <span class="days-num" id="splashDays">148</span>
+        <span class="days-label">DAYS<br />TOGETHER</span>
+      </div>
+      <p class="since">since May 23, 2026</p>
+    </div>
+
+    <div class="splash-hint">
+      <span>轻触进入</span>
+    </div>
+  </div>
+
+  <div id="app" class="app" hidden>
+    <header class="apphead" id="apphead">
+      <button class="back" id="back" aria-label="返回主页" hidden>
+        <svg viewBox="0 0 24 24"><path d="M15 5 8 12l7 7"/></svg>
+      </button>
+      <div class="apphead-slot" id="headSlot"></div>
+      <div class="apphead-text">
+        <div class="greet" id="greet">晚上好，今天辛苦了</div>
+        <div class="stamp" id="stamp"></div>
+      </div>
+    </header>
+
+    <main id="main" class="main"></main>
+
+    <nav class="tabbar" id="tabbar" aria-label="主导航"></nav>
+    <button class="fab" id="fab" aria-label="聊天">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5a8.5 8.5 0 1 1-3.4-6.8"/><path d="M21 4.5v3.6h-3.6"/><path d="M8 11h8M8 14.5h5"/></svg>
+    </button>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

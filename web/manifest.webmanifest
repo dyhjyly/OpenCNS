@@ -1,0 +1,14 @@
+{
+  "name": "咱们的家",
+  "short_name": "家",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#FAF5EF",
+  "theme_color": "#FAF5EF",
+  "lang": "zh-CN",
+  "icons": [
+    { "src": "./icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
