@@ -266,6 +266,7 @@ export function startHttpServer(): Server {
       const lat = req.query.lat ? Number(req.query.lat) : undefined;
       const lon = req.query.lon ? Number(req.query.lon) : undefined;
       const city = typeof req.query.city === 'string' ? req.query.city : undefined;
+      const fresh = req.query.fresh === '1' || req.query.fresh === 'true';
 
       const [summary, weather] = await Promise.all([
         getHomeSummary(),
@@ -273,6 +274,7 @@ export function startHttpServer(): Server {
           lat: Number.isFinite(lat) ? lat : undefined,
           lon: Number.isFinite(lon) ? lon : undefined,
           city,
+          fresh,
         }),
       ]);
 

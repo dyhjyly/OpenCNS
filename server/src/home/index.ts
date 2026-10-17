@@ -122,15 +122,20 @@ async function geocode(city: string): Promise<{ lat: number; lon: number; name: 
   }
 }
 
-export async function getWeather(opts: { lat?: number; lon?: number; city?: string }): Promise<WeatherInfo> {
+export async function getWeather(opts: { lat?: number; lon?: number; city?: string; fresh?: boolean }): Promise<WeatherInfo> {
   let lat = opts.lat;
   let lon = opts.lon;
   let cityName: string | null = opts.city ?? null;
   let region: string | null = null;
 
+  // 标签用的城市名：优先传进来的，其次设置里的
+  const settingCity = await one<{ value: unknown }>(`select value from settings where key = 'weather.city'`)
+    .then((r) => (typeof r?.value === 'string' ? r.value.trim() : ''))
+    .catch(() => '');
+  const labelCity = cityName || settingCity || null;
+
   if (lat === undefined || lon === undefined) {
-    const city = opts.city ?? (await one<{ value: unknown }>(`select value from settings where key = 'weather.city'`))?.value;
-    const targetCity = typeof city === 'string' && city.trim() ? city.trim() : '郑州';
+    const targetCity = cityName || settingCity || '驻马店';
     cityName = targetCity;
     const geo = await geocode(targetCity).catch(() => null);
     if (geo) {
@@ -139,6 +144,10 @@ export async function getWeather(opts: { lat?: number; lon?: number; city?: stri
       region = geo.region;
       cityName = geo.name;
     }
+  } else {
+    // 有坐标时不做反地理编码（open-meteo 不提供），标签就用设置里的城市名；
+    // 没设过就是 null，前端显示"你那边"——但**绝不能**因为拿不到城市名就整块空着。
+    cityName = labelCity;
   }
 
   if (lat === undefined || lon === undefined) {
@@ -161,7 +170,7 @@ export async function getWeather(opts: { lat?: number; lon?: number; city?: stri
 
   const key = `${lat.toFixed(2)},${lon.toFixed(2)}`;
   const hit = cache.get(key);
-  if (hit && Date.now() - hit.at < TTL) {
+  if (hit && !opts.fresh && Date.now() - hit.at < TTL) {
     return { ...hit.data, city: cityName ?? hit.data.city };
   }
 

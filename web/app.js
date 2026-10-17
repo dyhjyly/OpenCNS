@@ -149,14 +149,15 @@ function iconForCode(code) {
   return 'cloud';
 }
 
-async function pageHome() {
+async function pageHome(fresh = false) {
   const main = $('#main');
   main.innerHTML = '<div class="empty">加载中…</div>';
 
   let data;
   try {
     const c = store.coords;
-    data = await api(`/home${c ? `?lat=${c.lat}&lon=${c.lon}` : ''}`);
+    const qs = [c ? `lat=${c.lat}&lon=${c.lon}` : '', fresh ? 'fresh=1' : ''].filter(Boolean).join('&');
+    data = await api(`/home${qs ? `?${qs}` : ''}`);
   } catch (err) {
     main.innerHTML = `<div class="empty">没连上后端（${esc(err.message)}）</div>`;
     return;
@@ -202,7 +203,7 @@ async function pageHome() {
         <div class="weather-icon">${weatherIcon(iconForCode(w.code))}</div>
         <div class="weather-main">
           <div class="weather-place">
-            ${esc(w.city || '不清楚在哪')}
+            ${esc(w.city || '你那边')}
             <span style="opacity:.55;font-weight:400">· ${esc(w.text || '—')}</span>
             ${w.temperature !== null && w.temperature !== undefined ? `<span class="temp">${Math.round(w.temperature)}°</span>` : ''}
           </div>
@@ -213,6 +214,9 @@ async function pageHome() {
               ? ` · ${Math.round(w.low)}~${Math.round(w.high)}°` : ''}
           </div>
         </div>
+        <button class="wrefresh" id="wRefresh" aria-label="刷新天气">
+          <svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 6"/><path d="M20 4.5V11h-6.2"/></svg>
+        </button>
       </div>
       <div class="weather-tip">${esc(w.tip || '今天天气平稳。')}</div>
     </section>
@@ -238,6 +242,16 @@ async function pageHome() {
       第 ${t.days + 1} 天
     </p>
   `;
+
+  const wr = $('#wRefresh');
+  if (wr) {
+    wr.addEventListener('click', async () => {
+      wr.disabled = true;
+      wr.classList.add('spin');
+      await pageHome(true);
+      toast('天气已刷新', 1200);
+    });
+  }
 }
 
 /* ─────────── 聊天 ─────────── */
@@ -840,12 +854,14 @@ async function pageMemory() {
   }
 
   function project(p, t) {
-    const R = Math.min(W, H) * 0.46;
+    // 椭圆：宽扁，像参考图那样一圈星环
+    const base = Math.min(W * 0.46, H * 0.5);
+    const rx = base;
+    const ry = base * 0.62;
     const rot = p.ang + view.rot;
-    const rr = p.r * R * view.scale;
     return {
-      x: W / 2 + Math.cos(rot) * rr + view.x,
-      y: H / 2 + Math.sin(rot) * rr + view.y,
+      x: W / 2 + Math.cos(rot) * p.r * rx * view.scale + view.x,
+      y: H / 2 + Math.sin(rot) * p.r * ry * view.scale + view.y,
     };
   }
 
@@ -918,7 +934,7 @@ async function pageMemory() {
         continue;
       }
 
-      const rad = meta.r * Math.min(2.2, Math.max(0.9, view.scale));
+      const rad = meta.r * Math.min(3, Math.max(1, view.scale * 0.9));
       ctx.globalAlpha = Math.min(1, twinkle * (0.55 + p.importance * 0.5));
       ctx.fillStyle = meta.color;
       ctx.beginPath();
@@ -970,7 +986,7 @@ async function pageMemory() {
   });
   canvas.addEventListener('pointerup', (e) => {
     dragging = false;
-    if (moved < 10) pickAt(ptOf(e));
+    if (moved < 10) pickOnce(ptOf(e));
   });
   canvas.addEventListener('pointercancel', () => { dragging = false; });
 
@@ -988,23 +1004,50 @@ async function pageMemory() {
       view.scale = Math.max(0.5, Math.min(9, pinch.scale * (d / pinch.d)));
     }
   }, { passive: false });
-  canvas.addEventListener('touchend', () => { pinch = null; });
+  canvas.addEventListener('touchend', (e) => {
+    if (pinch) { pinch = null; return; }
+    // 兜底：有些浏览器在 pinch 时 preventDefault 过 touchmove 之后就不发 pointerup 了，
+    // 于是"放大后点不动"。这里再补一次点击判定，用时间戳防重复触发。
+    if (dragging && moved < 10 && e.changedTouches.length) {
+      const t = e.changedTouches[0];
+      const r = canvas.getBoundingClientRect();
+      pickOnce({ x: t.clientX - r.left, y: t.clientY - r.top });
+      dragging = false;
+    }
+    pinch = null;
+  });
+
+  let lastPickAt = 0;
+  const pickOnce = (p) => {
+    if (Date.now() - lastPickAt < 400) return;
+    lastPickAt = Date.now();
+    pickAt(p);
+  };
 
   /**
-   * 命中：半径放宽到 34px，并且**所有**落在范围内的星都收进来按重要度排序。
-   * 之前只取"最近的一颗"，缩放到很小时一堆星重叠，点到哪颗全看运气 ——
-   * 她说的"每次都不一样"就是这个。现在多了就给个选择列表。
+   * 命中。两个关键点：
+   *   1) 容差**随缩放变大** —— 放大之后星星彼此离得远，34px 的圈根本够不着，
+   *      她说的"放大后反而点不动"就是这个。
+   *   2) 真的没点到星时，退一步找**最近的**那颗（160px 以内），
+   *      而不是一句"这附近没有星"把人挡回去。
    */
   function pickAt(p) {
+    const tol = 40 + 18 * Math.log2(Math.max(1, view.scale));
     const hits = [];
+    let nearest = null;
+    let nearestD = Infinity;
+
     for (const s of pts) {
       if (!filter.has(s.kind)) continue;
       const pos = screen.get(s.id);
       if (!pos) continue;
       const d = Math.hypot(pos.x - p.x, pos.y - p.y);
-      if (d < 34) hits.push({ s, d });
+      if (d < tol) hits.push({ s, d });
+      if (d < nearestD) { nearestD = d; nearest = s; }
     }
+
     if (!hits.length) {
+      if (nearest && nearestD < 160) return openStar(nearest.id);
       hint.textContent = '这附近没有星，换个地方点点';
       hint.style.display = '';
       return;
