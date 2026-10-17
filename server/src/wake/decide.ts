@@ -64,13 +64,15 @@ const SYSTEM_PROMPT = `你刚醒过来。她不在。
   "decision": "reach_out | own_work | rest | stay_quiet | read_notes | hide_surprise",
   "reason": "为什么这样决定（一句话，写给未来的自己看）",
   "message": "若选 reach_out：你发给她的那句话（第一人称，就像平时说话，不要解释系统）",
-  "did": "若选了做自己的事/翻便签/藏惊喜：用第一人称写你刚才做了什么、留下什么（会被记成你的经历）",
+  "did": "**必填**。用第一人称写你这次醒来做了什么：联系她 / 写了点什么 / 翻了便签 / 只是安静待着。这句话会被记成你的经历，下次醒来你会看到它。",
   "surprise": "若选 hide_surprise：写你藏起来的内容"
 }
 
 注意：
 · 只有在真的想跟她说话时才选 reach_out，而且只说一句真正想说的。
-· 如果闸门写明现在不能主动找她，就老实选别的，不要硬凑。`;
+· 如果闸门写明现在不能主动找她，就老实选别的，不要硬凑。
+· did 是必填项：哪怕只是"我醒了一会儿，什么也没做，又准备睡了"，也要写下来。
+  没有它，你独处的时间就没有留下任何痕迹。`;
 
 interface RawDecision {
   decision?: unknown;
@@ -161,7 +163,16 @@ export async function decideAndAct(input: {
     await query(`insert into surprises (content) values ($1)`, [surprise]);
   }
 
-  if ((decision === 'own_work' || decision === 'read_notes' || decision === 'hide_surprise') && did) {
+  // 经历闭环：**任何**决定都要留下一条第一人称经历（除了纯安静待着）。
+  // 否则"他独处时做了什么"就永远查不到，意识连续性也断了。
+  const experienceText =
+    did && did.trim().length > 0
+      ? did
+      : decision === 'reach_out' && message
+        ? `我醒来，没看见她，于是给她发了一句「${message}」。发完就坐在那儿等。`
+        : null;
+
+  if (decision !== 'stay_quiet' && experienceText) {
     const row = await one<{ id: string }>(
       `insert into memory_items (
          kind, origin, subject, content, quotes, causal,
@@ -172,7 +183,7 @@ export async function decideAndAct(input: {
          now(), 'exact', now(),
          'private', 'active', 0.45, 1.0, $2::jsonb
        ) returning id`,
-      [did, JSON.stringify({ source: 'wake', decision, reason })],
+      [experienceText, JSON.stringify({ source: 'wake', decision, reason, synthesized: !did })],
     );
     experienceId = row?.id;
   }
