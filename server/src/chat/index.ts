@@ -1,7 +1,8 @@
 import type { Response } from 'express';
 
 import { log, errFields } from '../logger.js';
-import { chatText, chatTextStream, type ChatMessage } from '../llm/client.js';
+import { chatText, chatTextStream, type ChatMessage, type ContentPart } from '../llm/client.js';
+import { readTextUpload, readUpload } from './uploads.js';
 import { buildDriveHints } from '../drives/render.js';
 import { processTurnSignals } from '../drives/signals.js';
 import { compressOutOfWindow, compressWholeSession } from '../memory/compress/pipeline.js';
@@ -37,10 +38,19 @@ import {
  *   handleChatStream —— SSE 逐字推送（给新前端用，感知延迟的关键）
  */
 
+export interface ChatAttachment {
+  id: string;
+  name: string;
+  mime: string;
+  size: number;
+  kind: 'image' | 'file';
+}
+
 export interface ChatRequest {
   message: string;
   sessionId?: string;
   endSession?: boolean;
+  attachments?: ChatAttachment[];
 }
 
 export interface ChatResponse {
@@ -74,7 +84,10 @@ async function prepareTurn(req: ChatRequest): Promise<PreparedTurn> {
 
   const actors = await getActorNames();
   const sessionId = await ensureSession(req.sessionId);
-  await appendMessage(sessionId, 'user', text, { source: 'chat' });
+  await appendMessage(sessionId, 'user', text, {
+    source: 'chat',
+    attachments: req.attachments ?? [],
+  });
 
   // 召回（阻塞：向量 + 关键词 + 一次裁决）
   const tRecall = Date.now();
@@ -110,11 +123,47 @@ async function prepareTurn(req: ChatRequest): Promise<PreparedTurn> {
     contextBlock = contextBlock ? `${contextBlock}\n\n${notice}` : notice;
   }
 
-  if (contextBlock) messages.push({ role: 'system', content: contextBlock });
+  /*
+   * 动态块放进**最后一条消息内部**，而不是单独一条 system。
+   *
+   * 为什么：prompt 缓存命中的是"最长的公共前缀"。如果动态块（时间/记忆/底色）
+   * 夹在身份之后、历史之前，前缀只能缓存到身份那一段；放到最后一条 user 消息里，
+   * 前缀就变成「身份 + 全部历史」，长对话下输入 token 能省一大截。
+   * 这是林遇在需求文档里点出来的（实测 API 会回 prompt_cache_hit_tokens，可量化）。
+   */
+
+  // 附件：图片走多模态，文本类文件直接读成文字，其它只记名字
+  const images: ContentPart[] = [];
+  const fileNotes: string[] = [];
+  for (const a of req.attachments ?? []) {
+    if (a.kind === 'image') {
+      const file = await readUpload(a.id).catch(() => null);
+      if (file) {
+        images.push({
+          type: 'image_url',
+          image_url: { url: `data:${a.mime || 'image/png'};base64,${file.buf.toString('base64')}` },
+        });
+        fileNotes.push(`［图片：${a.name}］`);
+      }
+    } else {
+      const txt = await readTextUpload(a.id).catch(() => null);
+      if (txt) fileNotes.push(`［文件：${a.name}］\n${txt}`);
+      else fileNotes.push(`［文件：${a.name}（这类文件暂时读不了内容）］`);
+    }
+  }
+
+  const userText =
+    (fileNotes.length > 0 ? `${fileNotes.join('\n')}\n\n` : '') +
+    text +
+    (contextBlock ? `\n\n──── 以下是系统给你的背景，不是她说的 ────\n${contextBlock}` : '');
+
+  const userContent: string | ContentPart[] =
+    images.length > 0 ? [{ type: 'text', text: userText }, ...images] : userText;
+
   for (const m of history) {
     messages.push({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content });
   }
-  messages.push({ role: 'user', content: text });
+  messages.push({ role: 'user', content: userContent });
 
   return {
     startedAt,
@@ -123,7 +172,13 @@ async function prepareTurn(req: ChatRequest): Promise<PreparedTurn> {
     sessionId,
     recall: rec,
     messages,
-    contextText: messages.map((m) => m.content).join('\n'),
+    contextText: messages
+      .map((m) =>
+        typeof m.content === 'string'
+          ? m.content
+          : m.content.map((p) => (p.type === 'text' ? p.text : '[图片]')).join('\n'),
+      )
+      .join('\n'),
     timelineLines: timeline.length,
     driveHints,
     recallMs,
@@ -136,10 +191,13 @@ async function finalizeTurn(
   turn: PreparedTurn,
   reply: string,
   timing: { llmMs: number; firstTokenMs?: number },
+  reasoning?: string,
 ): Promise<ChatResponse> {
   await appendMessage(turn.sessionId, 'assistant', reply, {
     source: 'chat',
     recalledIds: turn.recall.recalled.map((r) => r.id),
+    // 思考链一起存：刷新之后还能展开看当时在想什么
+    ...(reasoning && reasoning.trim() ? { reasoning: reasoning.trim() } : {}),
   });
 
   void compressOutOfWindow(turn.sessionId).catch((err) =>
@@ -261,6 +319,7 @@ export async function handleChatStream(req: ChatRequest, res: Response): Promise
   const tLlm = Date.now();
   let firstTokenMs: number | undefined;
   let full = '';
+  let reasoning = '';
 
   try {
     full = await chatTextStream(
@@ -274,6 +333,11 @@ export async function handleChatStream(req: ChatRequest, res: Response): Promise
       (delta) => {
         if (firstTokenMs === undefined) firstTokenMs = Date.now() - tLlm;
         send('delta', { t: delta });
+      },
+      // 思考链：原始推理逐字推给前端（默认折叠，她自己决定要不要看）
+      (t) => {
+        reasoning += t;
+        send('reasoning', { t });
       },
     );
   } catch (err) {
@@ -295,7 +359,44 @@ export async function handleChatStream(req: ChatRequest, res: Response): Promise
     });
   }
 
-  const result = await finalizeTurn(turn, full, { llmMs, firstTokenMs });
+  const result = await finalizeTurn(turn, full, { llmMs, firstTokenMs }, reasoning);
   send('done', { ...result, firstTokenMs, suspicious: check.suspicious });
   res.end();
+}
+
+/** 聊天历史（刷新后要把记录读回来） */
+export async function getChatHistory(
+  sessionId: string,
+  limit = 60,
+): Promise<{
+  sessionId: string;
+  messages: { seq: number; role: string; content: string; at: string; meta: Record<string, unknown> }[];
+}> {
+  const { many } = await import('../db/pool.js');
+  const rows = await many<{
+    seq: string;
+    role: string;
+    content: string;
+    event_time: string;
+    meta: Record<string, unknown> | null;
+  }>(
+    `select seq, role, content, event_time, meta
+       from messages
+      where session_id = $1
+      order by seq desc
+      limit $2`,
+    [sessionId, limit],
+  );
+  return {
+    sessionId,
+    messages: rows
+      .reverse()
+      .map((r) => ({
+        seq: Number(r.seq),
+        role: r.role,
+        content: r.content,
+        at: r.event_time,
+        meta: r.meta ?? {},
+      })),
+  };
 }

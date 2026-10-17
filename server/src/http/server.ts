@@ -381,9 +381,57 @@ export function startHttpServer(): Server {
     }
   });
 
+  app.post('/upload', requireToken, async (req, res) => {
+    try {
+      const body = (req.body ?? {}) as { name?: string; mime?: string; dataBase64?: string };
+      if (!body.dataBase64) return res.status(400).json({ error: 'dataBase64_required' });
+      const { saveUpload } = await import('../chat/uploads.js');
+      const saved = await saveUpload({
+        name: body.name ?? 'file',
+        mime: body.mime ?? 'application/octet-stream',
+        dataBase64: body.dataBase64,
+      });
+      return res.json({ ok: true, ...saved, url: `/v2/api/upload/${saved.id}` });
+    } catch (err) {
+      log.error('上传失败', errFields(err));
+      return res.status(400).json({ error: 'upload_failed', message: String((err as Error)?.message ?? err) });
+    }
+  });
+
+  app.get('/upload/:id', requireToken, async (req, res) => {
+    try {
+      const { readUpload, mimeOfExt } = await import('../chat/uploads.js');
+      const file = await readUpload(String(req.params.id));
+      if (!file) return res.status(404).json({ error: 'not_found' });
+      res.setHeader('content-type', mimeOfExt(file.ext));
+      res.setHeader('cache-control', 'private, max-age=86400');
+      return res.send(file.buf);
+    } catch (err) {
+      return res.status(500).json(errFields(err));
+    }
+  });
+
+  app.get('/chat/history', requireToken, async (req, res) => {
+    try {
+      const sessionId = typeof req.query.sessionId === 'string' ? req.query.sessionId : '';
+      if (!sessionId) return res.status(400).json({ error: 'sessionId_required' });
+      const limit = Math.min(200, Math.max(1, Number(req.query.limit ?? 60)));
+      const { getChatHistory } = await import('../chat/index.js');
+      return res.json({ ok: true, ...(await getChatHistory(sessionId, limit)) });
+    } catch (err) {
+      log.error('读聊天历史失败', errFields(err));
+      return res.status(500).json(errFields(err));
+    }
+  });
+
   app.post('/chat', requireToken, async (req, res) => {
     try {
-      const body = (req.body ?? {}) as { message?: string; sessionId?: string; endSession?: boolean };
+      const body = (req.body ?? {}) as {
+        message?: string;
+        sessionId?: string;
+        endSession?: boolean;
+        attachments?: import('../chat/index.js').ChatAttachment[];
+      };
       if (!body.message || !body.message.trim()) {
         return res.status(400).json({ error: 'message_required' });
       }
@@ -392,6 +440,7 @@ export function startHttpServer(): Server {
         message: body.message,
         sessionId: body.sessionId,
         endSession: body.endSession,
+        attachments: body.attachments,
       });
       return res.json(result);
     } catch (err) {
@@ -406,13 +455,23 @@ export function startHttpServer(): Server {
      * 事件：meta（会话/召回信息）→ delta（逐字）→ done（完整结果）| error
      */
     try {
-      const body = (req.body ?? {}) as { message?: string; sessionId?: string; endSession?: boolean };
+      const body = (req.body ?? {}) as {
+        message?: string;
+        sessionId?: string;
+        endSession?: boolean;
+        attachments?: import('../chat/index.js').ChatAttachment[];
+      };
       if (!body.message || !body.message.trim()) {
         return res.status(400).json({ error: 'message_required' });
       }
       const { handleChatStream } = await import('../chat/index.js');
       await handleChatStream(
-        { message: body.message, sessionId: body.sessionId, endSession: body.endSession },
+        {
+          message: body.message,
+          sessionId: body.sessionId,
+          endSession: body.endSession,
+          attachments: body.attachments,
+        },
         res,
       );
     } catch (err) {

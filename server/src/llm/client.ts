@@ -19,9 +19,14 @@ export { extractJson, repairTruncatedJson } from './json.js';
  * 不用登服务器改 .env 重启。API key / baseUrl 仍然只在环境变量里。
  */
 
+/** 多模态内容块：文本或图片（图片走 data URI 或 http URL） */
+export type ContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } };
+
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
-  content: string;
+  content: string | ContentPart[];
 }
 
 export interface ChatOptions {
@@ -221,6 +226,7 @@ export async function chatTextStream(
   messages: ChatMessage[],
   opts: ChatOptions,
   onDelta: (text: string) => void,
+  onReasoning?: (text: string) => void,
 ): Promise<string> {
   const ep = pick({ ...opts, label: opts.label ?? 'stream' });
   if (!ep.baseUrl || !ep.apiKey || !ep.model) {
@@ -294,7 +300,10 @@ export async function chatTextStream(
             choices?: { delta?: { content?: string; reasoning_content?: string } }[];
           };
           const delta = json.choices?.[0]?.delta;
-          if (delta?.reasoning_content) reasoningChars += delta.reasoning_content.length;
+          if (delta?.reasoning_content) {
+            reasoningChars += delta.reasoning_content.length;
+            if (onReasoning) onReasoning(delta.reasoning_content);
+          }
           const piece = delta?.content ?? '';
           if (piece) {
             full += piece;
@@ -316,7 +325,14 @@ export async function chatTextStream(
     label: ep.label,
     replyChars: full.length,
     reasoningChars,
-    promptChars: messages.reduce((n, m) => n + m.content.length, 0),
+    promptChars: messages.reduce(
+      (n, m) =>
+        n +
+        (typeof m.content === 'string'
+          ? m.content.length
+          : m.content.reduce((k, p) => k + (p.type === 'text' ? p.text.length : 0), 0)),
+      0,
+    ),
   });
 
   return full;
