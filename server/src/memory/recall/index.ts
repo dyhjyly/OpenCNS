@@ -472,6 +472,9 @@ export async function recall(userMessage: string, opts: { limit?: number } = {})
   }
 
   // 裁决：由认知模型判断"哪几条真的帮得上"
+  //
+  // 候选正文要**截短**：日记式记忆常有三五百字，12 条就是四五千字输入，
+  // 裁决光读输入就要花十秒（实测 11.9 秒）。判断相关性看前 180 字足够。
   let selectedIds: string[] = [];
   let judgeReason: string | undefined;
   let judgeUsed = false;
@@ -479,7 +482,7 @@ export async function recall(userMessage: string, opts: { limit?: number } = {})
     const judgeInput: JudgeCandidate[] = top.map((c) => ({
       id: c.id,
       kind: c.kind,
-      content: c.content,
+      content: c.content.length > 180 ? `${c.content.slice(0, 180)}…` : c.content,
       event_time: c.event_time,
       importance: c.importance,
       similarity: c.similarity,
