@@ -78,10 +78,28 @@ interface CacheEntry {
 const cache = new Map<string, CacheEntry>();
 const TTL = 10 * 60_000;
 
+/** 兜底坐标：外网地理编码连不上时，至少这些城市还能出天气 */
+const FALLBACK_COORDS: Record<string, { lat: number; lon: number; region: string }> = {
+  驻马店: { lat: 32.9838, lon: 114.0259, region: '河南' },
+  郑州: { lat: 34.7466, lon: 113.6254, region: '河南' },
+  北京: { lat: 39.9042, lon: 116.4074, region: '北京' },
+  上海: { lat: 31.2304, lon: 121.4737, region: '上海' },
+  广州: { lat: 23.1291, lon: 113.2644, region: '广东' },
+  深圳: { lat: 22.5431, lon: 114.0579, region: '广东' },
+  珠海: { lat: 22.2707, lon: 113.5767, region: '广东' },
+  杭州: { lat: 30.2741, lon: 120.1551, region: '浙江' },
+  成都: { lat: 30.5728, lon: 104.0668, region: '四川' },
+  武汉: { lat: 30.5928, lon: 114.3055, region: '湖北' },
+  西安: { lat: 34.3416, lon: 108.9398, region: '陕西' },
+  厦门: { lat: 24.4798, lon: 118.0894, region: '福建' },
+  三亚: { lat: 18.2528, lon: 109.5119, region: '海南' },
+  汕头: { lat: 23.3535, lon: 116.6820, region: '广东' },
+};
+
 async function geocode(city: string): Promise<{ lat: number; lon: number; name: string; region: string | null } | null> {
   const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=zh&format=json`;
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(12_000) });
+    const res = await fetch(url, { signal: AbortSignal.timeout(9_000) });
     if (!res.ok) {
       log.warn('地理编码失败', { city, status: res.status });
       return null;
@@ -97,7 +115,9 @@ async function geocode(city: string): Promise<{ lat: number; lon: number; name: 
     return { lat: r.latitude, lon: r.longitude, name: r.name, region: r.admin1 ?? null };
   } catch (err) {
     // 不要静默吞掉：之前就是这里 catch 成 null，天气一直显示"定位不到"却查不到原因
-    log.warn('地理编码请求异常', { city, ...errFields(err) });
+    log.warn('地理编码请求异常，用内置坐标兜底', { city, ...errFields(err) });
+    const fb = FALLBACK_COORDS[city];
+    if (fb) return { lat: fb.lat, lon: fb.lon, name: city, region: fb.region };
     return null;
   }
 }

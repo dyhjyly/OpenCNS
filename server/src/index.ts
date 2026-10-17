@@ -10,12 +10,14 @@ import { loadSettings } from './settings/index.js';
 import { log, errFields } from './logger.js';
 
 /**
- * 出站请求优先 IPv4。
+ * 出站请求优先 IPv6。
  *
- * 踩过的坑：geocoding-api.open-meteo.com 只解析出 IPv6 地址，curl 会自动回退到
- * IPv4，而 Node 的 fetch(undici) 不会 —— 于是服务端"连不上"天气，本机 curl 却好着。
+ * 踩过的坑：geocoding-api.open-meteo.com 的 **IPv4 地址（202.61.206.6）从这台机器
+ * 连不通、会 ETIMEDOUT**，而它的 IPv6 正常。curl 恰好走了 IPv6 所以看着没问题，
+ * Node 的 fetch(undici) 选了 IPv4 就一直失败。
+ * 先试 IPv6，失败再回落 IPv4（DNS 只给 A 记录时就只有 IPv4，不受影响）。
  */
-setDefaultResultOrder('ipv4first');
+setDefaultResultOrder('ipv6first');
 
 /**
  * OpenCNS v2 服务入口。
