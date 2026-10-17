@@ -19,6 +19,7 @@ export const EDITABLE_KEYS = [
   'llm.cognitive_effort',
   'llm.chat_max_tokens',
   'chat.temperature',
+  'weather.city',
 ] as const;
 
 export type EditableKey = (typeof EDITABLE_KEYS)[number];

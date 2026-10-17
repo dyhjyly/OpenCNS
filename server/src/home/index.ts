@@ -80,14 +80,26 @@ const TTL = 10 * 60_000;
 
 async function geocode(city: string): Promise<{ lat: number; lon: number; name: string; region: string | null } | null> {
   const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=zh&format=json`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(12_000) });
-  if (!res.ok) return null;
-  const json = (await res.json()) as {
-    results?: { latitude: number; longitude: number; name: string; admin1?: string }[];
-  };
-  const r = json.results?.[0];
-  if (!r) return null;
-  return { lat: r.latitude, lon: r.longitude, name: r.name, region: r.admin1 ?? null };
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(12_000) });
+    if (!res.ok) {
+      log.warn('地理编码失败', { city, status: res.status });
+      return null;
+    }
+    const json = (await res.json()) as {
+      results?: { latitude: number; longitude: number; name: string; admin1?: string }[];
+    };
+    const r = json.results?.[0];
+    if (!r) {
+      log.warn('地理编码没有结果', { city });
+      return null;
+    }
+    return { lat: r.latitude, lon: r.longitude, name: r.name, region: r.admin1 ?? null };
+  } catch (err) {
+    // 不要静默吞掉：之前就是这里 catch 成 null，天气一直显示"定位不到"却查不到原因
+    log.warn('地理编码请求异常', { city, ...errFields(err) });
+    return null;
+  }
 }
 
 export async function getWeather(opts: { lat?: number; lon?: number; city?: string }): Promise<WeatherInfo> {

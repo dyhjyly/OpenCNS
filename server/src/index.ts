@@ -1,3 +1,5 @@
+import { setDefaultResultOrder } from 'node:dns';
+
 import { config } from './config.js';
 import { assertDatabaseReady, closePool } from './db/pool.js';
 import { runMigrations } from './db/migrate.js';
@@ -6,6 +8,14 @@ import { startHttpServer } from './http/server.js';
 import { startTick } from './jobs/tick.js';
 import { loadSettings } from './settings/index.js';
 import { log, errFields } from './logger.js';
+
+/**
+ * 出站请求优先 IPv4。
+ *
+ * 踩过的坑：geocoding-api.open-meteo.com 只解析出 IPv6 地址，curl 会自动回退到
+ * IPv4，而 Node 的 fetch(undici) 不会 —— 于是服务端"连不上"天气，本机 curl 却好着。
+ */
+setDefaultResultOrder('ipv4first');
 
 /**
  * OpenCNS v2 服务入口。
