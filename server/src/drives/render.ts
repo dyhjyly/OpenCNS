@@ -23,22 +23,29 @@ export interface DriveHint {
 }
 
 /** 只暴露"值得他知道"的那几维；低于阈值的不提，免得变成打卡 */
+/** 高出静止水位至少这么多，才算"真的有信号" */
+const MARGIN_ABOVE_BASELINE = 0.08;
+
 export async function getDriveSnapshot(threshold = 0.3, top = 3): Promise<DriveHint[]> {
   const rows = await listDrives();
   return rows
-    .filter((r) => r.value >= threshold)
+    // 关键：**必须比"静止水位"明显高**才算有信号。
+    // 只看绝对阈值会出问题——好奇心的 baseline 正好是 0.30，压线就会被当成"有信号"，
+    // 于是每轮都把一条没有来由的状态注进上下文（实测踩到过）。
+    .filter((r) => r.value >= threshold && r.value >= r.baseline + MARGIN_ABOVE_BASELINE)
     .sort((a, b) => b.value - a.value)
     .slice(0, top)
     .map((r) => {
       const def = DRIVE_BY_KEY.get(r.drive_key);
+      // 来由必须是真的来由；没有就描述这个维度本身（不给数字、不给指令）
+      const reason = r.last_reason_text?.trim() || def?.signal || '';
       return {
         key: r.drive_key,
         label: def?.label ?? r.drive_key,
         layer: r.layer,
         band: bandOf(r.value),
         value: Number(r.value.toFixed(3)),
-        // 来由优先用真实原因；没有就退回这个维度的一般信号描述
-        reason: r.last_reason_text ?? def?.signal ?? '',
+        reason,
       };
     });
 }
