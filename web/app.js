@@ -799,8 +799,18 @@ async function pageMoments() {
 
   main.innerHTML = `
     <div class="mom-head">
-      <span class="caps">他写在这里的</span>
+      <span class="caps">两个人的朋友圈</span>
       <button class="mini" id="momRefresh" style="margin-left:auto">刷新</button>
+    </div>
+
+    <div class="card ornate mom-compose">
+      <textarea id="momText" rows="2" placeholder="写点什么…（只有你们两个人看得见）"></textarea>
+      <div class="mom-compose-bar">
+        <button class="mini" id="momImg">图片</button>
+        <span id="momAttach" class="mom-attach"></span>
+        <button class="mini" id="momPost" style="margin-left:auto">发给他看</button>
+      </div>
+      <input type="file" id="momFile" accept="image/*" multiple hidden />
     </div>
 
     <div id="momFeed">
@@ -829,6 +839,54 @@ async function pageMoments() {
   `;
 
   $('#momRefresh').addEventListener('click', () => pageMoments());
+
+  // 她也能发 —— 他下次醒来会在房间里看到
+  let momImages = [];
+  const attachBox = $('#momAttach');
+  const fileInput = $('#momFile');
+  const renderAttach = () => {
+    attachBox.innerHTML = momImages
+      .map((i, n) => `<span class="chip">🖼 ${esc(i.name || '图片')}<button data-n="${n}">×</button></span>`)
+      .join('');
+    attachBox.querySelectorAll('button').forEach((b) =>
+      b.addEventListener('click', () => { momImages.splice(Number(b.dataset.n), 1); renderAttach(); }));
+  };
+
+  $('#momImg').addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', async () => {
+    const files = Array.from(fileInput.files || []);
+    fileInput.value = '';
+    if (!files.length) return;
+    toast('上传中…', 1200);
+    for (const raw of files) {
+      try {
+        const f = await shrinkImage(raw);
+        const up = await api('/upload', {
+          method: 'POST',
+          body: JSON.stringify({ name: f.name, mime: f.type || 'application/octet-stream', dataBase64: await fileToBase64(f) }),
+        });
+        momImages.push({ id: up.id, name: up.name, mime: up.mime });
+      } catch (err) {
+        toast('上传失败：' + err.message, 2600);
+      }
+    }
+    renderAttach();
+  });
+
+  $('#momPost').addEventListener('click', async () => {
+    const text = $('#momText').value.trim();
+    if (!text && momImages.length === 0) return toast('写点什么');
+    try {
+      await api('/moments', {
+        method: 'POST',
+        body: JSON.stringify({ content: text, author: 'human', images: momImages }),
+      });
+      toast('发了，他下次醒来会看到', 2000);
+      pageMoments();
+    } catch (err) {
+      toast('发布失败：' + err.message, 2600);
+    }
+  });
 
   main.querySelectorAll('.mom-like').forEach((b) =>
     b.addEventListener('click', async () => {
@@ -862,8 +920,24 @@ const DECISION_TEXT = {
   own_work: '他做了点自己的事',
   rest: '他回去睡了一会儿',
   stay_quiet: '他只是安静待着',
-  read_notes: '他翻了翻旧便签',
+  read_notes: '他翻了翻自己的东西',
   hide_surprise: '他藏了个惊喜',
+  social: '他在朋友圈动了动',
+  mixed: '他做了几件事',
+};
+
+const ACTION_TEXT = {
+  reach_out: '给你发了消息',
+  work: '做了自己的事',
+  post: '发了条动态',
+  comment: '评论了你',
+  like: '给你点了赞',
+  pat: '拍了拍你',
+  read_notes: '翻了便签',
+  read_moments: '看了看朋友圈',
+  rest: '回去睡了',
+  hide_surprise: '藏了个惊喜',
+  stay_quiet: '什么也没做',
 };
 
 async function pageWake() {
@@ -925,6 +999,9 @@ async function pageWake() {
           <div class="wake-row">
             <div class="wake-when">${fmt(e.at)}</div>
             <div class="wake-what">${esc(e.decision ? DECISION_TEXT[e.decision] || e.decision : e.skipped || '什么也没做')}</div>
+            ${e.actions && e.actions.length ? `<div class="wake-actions">${
+              e.actions.map((a) => `<span>${esc(ACTION_TEXT[a] || a)}</span>`).join('')
+            }</div>` : ''}
             ${e.did ? `<div class="wake-did">${esc(e.did)}</div>` : ''}
           </div>`).join('')}
     </section>

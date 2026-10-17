@@ -90,6 +90,7 @@ export async function runWakeCycle(opts: { force?: boolean } = {}): Promise<Wake
 
   const wakeLogId = await recordWake({
     decision: outcome.decision,
+    actions: outcome.actions,
     signals,
     modelCalls: outcome.modelCalls,
     driveSnapshot: { detail: signals.detail, driveHints: [] },

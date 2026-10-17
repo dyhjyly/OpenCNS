@@ -11,6 +11,8 @@ export interface WakeRoomEntry {
   id: number;
   at: string;
   decision: string | null;
+  /** 这一轮实际做了哪几件 */
+  actions: string[];
   skipped: string | null;
   modelCalls: number;
   /** 这一次醒来留下的经历（如果有） */
@@ -32,10 +34,11 @@ export async function getWakeRoom(limit = 20): Promise<WakeRoomView> {
     id: number;
     created_at: string;
     decision: string | null;
+    actions: unknown;
     skipped_reason: string | null;
     model_calls: number;
   }>(
-    `select id, created_at, decision, skipped_reason, model_calls
+    `select id, created_at, decision, actions, skipped_reason, model_calls
        from wake_log order by created_at desc limit $1`,
     [limit],
   );
@@ -66,6 +69,7 @@ export async function getWakeRoom(limit = 20): Promise<WakeRoomView> {
       id: Number(w.id),
       at: w.created_at,
       decision: w.decision,
+      actions: Array.isArray(w.actions) ? (w.actions as string[]) : [],
       skipped: w.decision ? null : w.skipped_reason,
       modelCalls: w.model_calls,
       did,

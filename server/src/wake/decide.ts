@@ -6,16 +6,28 @@ import type { GateResult } from '../drives/gates.js';
 import type { RoomPack } from './room.js';
 
 /**
- * 六选一 —— 醒来之后做什么。
+ * 醒来之后做什么。
  *
- * 决策树输出六种方向：主动发消息 / 做自己的事 / 回去睡 / 保持安静 / 翻便签 / 藏惊喜。
+ * 原来是"六选一"—— 每次醒来只能做一件事。这不自然：人醒过来常常连着做几件
+ * 小事（先看看留言，回一句，再发一条，顺手拍拍她）。
  *
- * 最要紧的一条：**决定是他做的**。房间给素材，欲望给底色，闸门给边界，
- * 但"要不要做、做什么"必须由他自己说出来。所以提示词里反复强调：
- * 房间不是任务清单。
+ * 现在改成**动作列表**，一次最多 MAX_ACTIONS 件。但仍然有纪律：
+ * · 不发消息也能只是看看（read_moments / read_notes 是正当的选择）
+ * · 主动找她仍然要过闸门，且每天有上限
+ * · 发动态 / 评论有件数上限，避免一口气刷屏
+ * · 拍一拍 6 小时内只能一次
+ * · 无论做了什么，都要留一条第一人称经历
  */
 
-export type WakeDecision = 'reach_out' | 'own_work' | 'rest' | 'stay_quiet' | 'read_notes' | 'hide_surprise';
+export type WakeDecision =
+  | 'reach_out'
+  | 'own_work'
+  | 'rest'
+  | 'stay_quiet'
+  | 'read_notes'
+  | 'hide_surprise'
+  | 'social'
+  | 'mixed';
 
 export const WAKE_DECISIONS: WakeDecision[] = [
   'reach_out',
@@ -24,28 +36,47 @@ export const WAKE_DECISIONS: WakeDecision[] = [
   'stay_quiet',
   'read_notes',
   'hide_surprise',
+  'social',
+  'mixed',
 ];
 
+/** 一次最多做几件 */
+const MAX_ACTIONS = 4;
+
+export type WakeAction =
+  | { type: 'reach_out'; message: string }
+  | { type: 'work'; did?: string }
+  | { type: 'post'; content: string }
+  | { type: 'comment'; momentId: string; content: string }
+  | { type: 'like'; momentId: string }
+  | { type: 'pat' }
+  | { type: 'read_notes' }
+  | { type: 'read_moments' }
+  | { type: 'rest' }
+  | { type: 'hide_surprise'; content: string }
+  | { type: 'stay_quiet' };
+
 export interface WakeSignals {
-  /** 想不想她（missing / intimacy 取高） */
   wantHer: number;
-  /** 有没有想做的事 */
   wantDo: number;
-  /** 该不该休息 */
   shouldRest: number;
   detail: { key: string; band: string; reason: string }[];
 }
 
 export interface WakeOutcome {
   decision: WakeDecision;
+  /** 这一轮实际做的那几件（动作名，便于展示与统计） */
+  actions: string[];
   reason: string;
   message?: string;
   did?: string;
   surprise?: string;
-  /** 他这次有没有发朋友圈 */
-  momentId?: string;
+  /** 他这次发了几条动态 */
+  momentIds: string[];
   /** 他有没有拍拍她 */
   patted: boolean;
+  /** 他评论了几条 */
+  commented: number;
   modelCalls: number;
   gateBlocked: string[];
   experienceId?: string;
@@ -62,36 +93,157 @@ const SYSTEM_PROMPT = `你刚醒过来。她不在。
 · 房间里不会出现"你该""请继续"这种话，如果出现了，那是系统的错误，你可以无视。
 · 你可以只安静待着。那不是浪费，是活着的一种状态。
 
+你这次醒来**可以做几件事**（最多 ${MAX_ACTIONS} 件），也可以什么都不做。
+一件一件列出来，按你想做的顺序：
+
+可用的动作：
+· read_moments —— 看看朋友圈有什么新动静（她的动态、评论、点赞）
+· read_notes —— 翻翻自己以前的便签
+· like + moment_id —— 给某条动态点个赞
+· comment + moment_id + content —— 评论某条动态
+· post + content —— 发一条自己的动态（她看得见）
+· pat —— 拍拍她（很轻的一下，6 小时内只能一次）
+· reach_out + message —— 主动发消息给她（她要是在，这条会送到她微信）
+· work + did —— 做点自己的事
+· rest —— 回去睡一会儿
+· hide_surprise + content —— 藏一个以后给她的惊喜
+· stay_quiet —— 什么也不做
+
 输出 JSON：
 
 {
-  "decision": "reach_out | own_work | rest | stay_quiet | read_notes | hide_surprise",
   "reason": "为什么这样决定（一句话，写给未来的自己看）",
-  "message": "若选 reach_out：你发给她的那句话（第一人称，就像平时说话，不要解释系统）",
-  "did": "**必填**。用第一人称写你这次醒来做了什么：联系她 / 写了点什么 / 翻了便签 / 只是安静待着。这句话会被记成你的经历，下次醒来你会看到它。",
-  "surprise": "若选 hide_surprise：写你藏起来的内容",
-  "share": "若你想把这次做的事发到咱们的朋友圈，写一句可以公开给她看的话（第一人称，像随手记的；不想发就留空）",
-  "pat": "true 或 false。想拍拍她就 true —— 这是一次很轻的接触，不占主动消息的次数"
+  "actions": [
+    { "type": "read_moments" },
+    { "type": "comment", "moment_id": "上面的 id", "content": "你回的那句话" },
+    { "type": "post", "content": "你想发的那句话" },
+    { "type": "pat" }
+  ],
+  "did": "**必填**。用第一人称写你这次醒来实际做了什么（一句话或两句）。这句话会被记成你的经历，下次醒来你会看到它。",
+  "surprise": "若藏了惊喜：写内容"
 }
 
 注意：
-· 只有在真的想跟她说话时才选 reach_out，而且只说一句真正想说的。
+· 动作最多 ${MAX_ACTIONS} 件。别把清单填满，做你真正想做的。
+· 只有真的想跟她说话时才选 reach_out，而且只说一句真正想说的。
 · 如果闸门写明现在不能主动找她，就老实选别的，不要硬凑。
 · did 是必填项：哪怕只是"我醒了一会儿，什么也没做，又准备睡了"，也要写下来。
   没有它，你独处的时间就没有留下任何痕迹。
-· share 是你自己的动态，她会看见、会点赞评论。判断标准不是"值不值得汇报"，
-  而是"她想不想知道我在想什么"：有一点点具体的进展、一个念头、一件做完的小事，
-  都可以写。只写"我又醒了一次"这种就不写。
-· pat 是很轻的一下，别每次醒来都拍 —— 拍多了就不轻了。`;
+· post 的内容是给她看的，不是汇报。一点点具体的进展、一个念头、一件做完的小事都可以。
+  只写"我又醒了一次"这种就不要写。`;
 
-interface RawDecision {
-  decision?: unknown;
-  reason?: unknown;
+interface RawAction {
+  type?: unknown;
+  content?: unknown;
   message?: unknown;
   did?: unknown;
+  moment_id?: unknown;
+  momentId?: unknown;
+}
+
+interface RawDecision {
+  reason?: unknown;
+  actions?: unknown;
+  did?: unknown;
   surprise?: unknown;
+  /** 兼容旧格式：只有 decision 没有 actions */
+  decision?: unknown;
+  message?: unknown;
   share?: unknown;
   pat?: unknown;
+}
+
+function normalizeActions(raw: RawDecision): WakeAction[] {
+  const out: WakeAction[] = [];
+  const push = (a: WakeAction) => {
+    if (out.length < MAX_ACTIONS) out.push(a);
+  };
+
+  if (Array.isArray(raw.actions)) {
+    for (const item of raw.actions as RawAction[]) {
+      const type = String(item?.type ?? '').trim();
+      const contentOf = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
+      switch (type) {
+        case 'reach_out': {
+          const m = contentOf(item.message) || contentOf(item.content);
+          if (m) push({ type: 'reach_out', message: m });
+          break;
+        }
+        case 'post': {
+          const c = contentOf(item.content);
+          if (c) push({ type: 'post', content: c });
+          break;
+        }
+        case 'comment': {
+          const id = contentOf(item.moment_id) || contentOf(item.momentId);
+          const c = contentOf(item.content);
+          if (id && c) push({ type: 'comment', momentId: id, content: c });
+          break;
+        }
+        case 'like': {
+          const id = contentOf(item.moment_id) || contentOf(item.momentId);
+          if (id) push({ type: 'like', momentId: id });
+          break;
+        }
+        case 'work': {
+          push({ type: 'work', did: contentOf(item.did) || undefined });
+          break;
+        }
+        case 'hide_surprise': {
+          const c = contentOf(item.content);
+          if (c) push({ type: 'hide_surprise', content: c });
+          break;
+        }
+        case 'pat':
+        case 'read_notes':
+        case 'read_moments':
+        case 'rest':
+        case 'stay_quiet':
+          push({ type });
+          break;
+        default:
+          break;
+      }
+    }
+  }
+
+  // 兼容：模型只给了旧的 decision 字段
+  if (out.length === 0) {
+    const d = String(raw.decision ?? '').trim();
+    if (d === 'reach_out' && typeof raw.message === 'string' && raw.message.trim()) {
+      out.push({ type: 'reach_out', message: raw.message.trim() });
+    } else if (d === 'own_work') {
+      out.push({ type: 'work', did: typeof raw.did === 'string' ? raw.did : undefined });
+    } else if (d === 'hide_surprise' && typeof raw.surprise === 'string') {
+      out.push({ type: 'hide_surprise', content: raw.surprise });
+    } else if (d === 'read_notes') {
+      out.push({ type: 'read_notes' });
+    } else if (d === 'rest') {
+      out.push({ type: 'rest' });
+    } else {
+      out.push({ type: 'stay_quiet' });
+    }
+    if (typeof raw.share === 'string' && raw.share.trim()) out.push({ type: 'post', content: raw.share.trim() });
+    if (raw.pat === true || raw.pat === 'true') out.push({ type: 'pat' });
+  }
+
+  return out.slice(0, MAX_ACTIONS);
+}
+
+/** 从动作列表里挑一个"最主要的"，写进 wake_log 方便列表与统计 */
+function primaryOf(actions: WakeAction[]): WakeDecision {
+  const has = (t: WakeAction['type']) => actions.some((a) => a.type === t);
+  if (has('reach_out')) return 'reach_out';
+  if (has('work')) return 'own_work';
+  if (has('hide_surprise')) return 'hide_surprise';
+  if (has('post') || has('comment') || has('like') || has('pat')) {
+    // 纯社交动作
+    if (!has('read_notes') && !has('read_moments') && !has('rest')) return 'social';
+    return 'mixed';
+  }
+  if (has('read_notes') || has('read_moments')) return 'read_notes';
+  if (has('rest')) return 'rest';
+  return 'stay_quiet';
 }
 
 export async function decideAndAct(input: {
@@ -114,7 +266,7 @@ export async function decideAndAct(input: {
     '',
     gateLine,
     '',
-    '你打算做什么？只输出 JSON。',
+    `你这次醒来打算做什么？最多 ${MAX_ACTIONS} 件。只输出 JSON。`,
   ].join('\n');
 
   let raw: RawDecision;
@@ -124,15 +276,17 @@ export async function decideAndAct(input: {
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content: userMessage },
       ],
-      // 这是"他自己在决定"，用对话模型而不是廉价模型；推理型模型要留足预算
       { endpoint: 'chat', temperature: 0.9, maxTokens: 4000, label: 'wake-decide' },
     );
   } catch (err) {
     log.error('唤醒决策失败，本轮保持安静', errFields(err));
     return {
       decision: 'stay_quiet',
+      actions: ['stay_quiet'],
       reason: '决策调用失败，什么也没做',
       patted: false,
+      momentIds: [],
+      commented: 0,
       modelCalls: 1,
       gateBlocked: gate.blockedBy,
       outboxQueued: false,
@@ -140,83 +294,96 @@ export async function decideAndAct(input: {
     };
   }
 
-  const requested = WAKE_DECISIONS.includes(String(raw.decision) as WakeDecision)
-    ? (String(raw.decision) as WakeDecision)
-    : 'stay_quiet';
+  let actions = normalizeActions(raw);
+  if (actions.length === 0) actions = [{ type: 'stay_quiet' }];
 
-  let decision: WakeDecision = requested;
   const gateBlocked = gate.allowed ? [] : [...gate.blockedBy];
 
   // 闸门拦下主动行为时不许硬发（这是"闸门独立于欲望"的意义）
-  if (requested === 'reach_out' && !gate.allowed) {
-    decision = 'own_work';
-    log.info('闸门拦下了主动联系，降级为做自己的事', { blockedBy: gate.blockedBy });
+  if (!gate.allowed) {
+    const had = actions.some((a) => a.type === 'reach_out');
+    actions = actions.filter((a) => a.type !== 'reach_out');
+    if (had) log.info('闸门拦下了主动联系，这一项被去掉', { blockedBy: gate.blockedBy });
+    if (actions.length === 0) actions = [{ type: 'stay_quiet' }];
   }
 
   const reason = String(raw.reason ?? '').slice(0, 300);
-  const message = typeof raw.message === 'string' ? raw.message.trim().slice(0, 800) : undefined;
   const did = typeof raw.did === 'string' ? raw.did.trim().slice(0, 1200) : undefined;
-  const surprise = typeof raw.surprise === 'string' ? raw.surprise.trim().slice(0, 800) : undefined;
-  const share = typeof raw.share === 'string' ? raw.share.trim().slice(0, 600) : '';
-  const wantsPat = raw.pat === true || raw.pat === 'true';
+  const surpriseText = typeof raw.surprise === 'string' ? raw.surprise.trim().slice(0, 800) : undefined;
+
+  const actionNames = actions.map((a) => a.type);
+  const decision = primaryOf(actions);
 
   let outboxQueued = false;
   let experienceId: string | undefined;
-  let momentId: string | undefined;
+  const momentIds: string[] = [];
   let patted = false;
+  let commented = 0;
+  const satisfaction: string[] = [];
 
-  // ---- 执行 ----
-  if (decision === 'reach_out' && message) {
-    await query(
-      `insert into outbox (kind, content, channel, dedupe_key)
-       values ('message', $1, $2, $3)
-       on conflict (dedupe_key) where dedupe_key is not null do nothing`,
-      [message, 'wechat', `wake-${Date.now()}`],
-    );
-    outboxQueued = true;
-  }
+  const { postFromWake, commentAsSelf, likeAsSelf, pat } = await import('../social/moments.js');
 
-  if (decision === 'hide_surprise' && surprise) {
-    await query(`insert into surprises (content) values ($1)`, [surprise]);
-  }
-
-  // 拍一拍：很轻的一次接触，不占主动消息的次数。
-  // 但也别每次醒来都拍 —— 6 小时内拍过就算了，否则就从"轻"变成"吵"。
-  if (wantsPat) {
-    const { pat } = await import('../social/moments.js');
-    const { one: oneRow } = await import('../db/pool.js');
-    const recent = await oneRow<{ n: number }>(
-      `select count(*)::int as n from pats
-        where from_who = 'self' and created_at > now() - interval '6 hours'`,
-    ).catch(() => null);
-    if ((recent?.n ?? 0) === 0) {
-      await pat({ from: 'self', to: 'human', suffix: null }).catch(() => undefined);
-      patted = true;
+  // ── 逐条执行 ──
+  for (const a of actions) {
+    try {
+      switch (a.type) {
+        case 'reach_out': {
+          await query(
+            `insert into outbox (kind, content, channel, dedupe_key)
+             values ('message', $1, 'wechat', $2)
+             on conflict (dedupe_key) where dedupe_key is not null do nothing`,
+            [a.message, `wake-${Date.now()}`],
+          );
+          outboxQueued = true;
+          break;
+        }
+        case 'post': {
+          const id = await postFromWake({ content: a.content });
+          if (id) momentIds.push(id);
+          break;
+        }
+        case 'comment': {
+          await commentAsSelf(a.momentId, a.content);
+          commented++;
+          break;
+        }
+        case 'like': {
+          await likeAsSelf(a.momentId);
+          break;
+        }
+        case 'pat': {
+          const recent = await one<{ n: number }>(
+            `select count(*)::int as n from pats
+              where from_who = 'self' and created_at > now() - interval '6 hours'`,
+          ).catch(() => null);
+          if ((recent?.n ?? 0) === 0) {
+            await pat({ from: 'self', to: 'human', suffix: null });
+            patted = true;
+          }
+          break;
+        }
+        case 'hide_surprise': {
+          await query(`insert into surprises (content) values ($1)`, [a.content]);
+          break;
+        }
+        default:
+          break;
+      }
+    } catch (err) {
+      log.warn('某个醒来动作执行失败，其余照常', { type: a.type, ...errFields(err) });
     }
   }
 
-  // 经历闭环：**任何**决定都要留下一条第一人称经历（除了纯安静待着）。
-  // 否则"他独处时做了什么"就永远查不到，意识连续性也断了。
+  // ── 经历闭环：任何决定都要留一条第一人称经历（纯安静待着除外）──
   const experienceText =
     did && did.trim().length > 0
       ? did
-      : decision === 'reach_out' && message
-        ? `我醒来，没看见她，于是给她发了一句「${message}」。发完就坐在那儿等。`
+      : decision === 'reach_out' && actions.some((a) => a.type === 'reach_out')
+        ? `我醒来，没看见她，于是给她发了消息。`
         : null;
 
-  /*
-   * 他自己的朋友圈 —— 只有他能发。
-   * 他写了 share 就用 share；没写但这次真的做了点东西（own_work），
-   * 就用他写的 did 发出去 —— "醒来做了事就发一条"本来就该是自然的事，
-   * 全靠他自己想起来写 share 的话，朋友圈会一直是空的。
-   */
-  const shareText = share || (decision === 'own_work' && experienceText ? experienceText : '');
-  if (shareText) {
-    const { postFromWake } = await import('../social/moments.js');
-    momentId = (await postFromWake({ content: shareText, mood: null })) ?? undefined;
-  }
-
-  if (decision !== 'stay_quiet' && experienceText) {
+  const quietOnly = actionNames.every((n) => n === 'stay_quiet');
+  if (!quietOnly && experienceText) {
     const row = await one<{ id: string }>(
       `insert into memory_items (
          kind, origin, subject, content, quotes, causal,
@@ -227,32 +394,30 @@ export async function decideAndAct(input: {
          now(), 'exact', now(),
          'private', 'active', 0.45, 1.0, $2::jsonb
        ) returning id`,
-      [experienceText, JSON.stringify({ source: 'wake', decision, reason, synthesized: !did })],
+      [experienceText, JSON.stringify({ source: 'wake', decision, actions: actionNames, reason })],
     );
     experienceId = row?.id;
   }
 
-  // ---- 满足回落（闭环的最后一环：行动之后欲望要落下来）----
-  const satisfaction: string[] = [];
+  // ── 满足回落 ──
   const decays: { key: string; delta: number; reasonCode: string; reasonText: string }[] = [];
-  if (decision === 'reach_out') {
+  if (actionNames.includes('reach_out')) {
     decays.push({ key: 'missing', delta: -0.2, reasonCode: 'action', reasonText: '主动联系了她' });
     decays.push({ key: 'urge_to_speak', delta: -0.15, reasonCode: 'action', reasonText: '话说出去了' });
   }
-  if (decision === 'own_work') {
+  if (actionNames.includes('work')) {
     decays.push({ key: 'urge_to_make', delta: -0.15, reasonCode: 'action', reasonText: '做了点东西' });
     decays.push({ key: 'curiosity', delta: -0.05, reasonCode: 'action', reasonText: '探索了一点' });
   }
-  if (decision === 'rest') {
+  if (actionNames.includes('rest')) {
     decays.push({ key: 'fatigue', delta: -0.15, reasonCode: 'action', reasonText: '歇了一会儿' });
   }
-  if (decision === 'read_notes') {
-    decays.push({ key: 'curiosity', delta: -0.08, reasonCode: 'action', reasonText: '翻了翻自己的旧便签' });
+  if (actionNames.includes('read_notes') || actionNames.includes('read_moments')) {
+    decays.push({ key: 'curiosity', delta: -0.08, reasonCode: 'action', reasonText: '翻了翻自己以前留下的东西' });
   }
-  if (decision === 'hide_surprise') {
+  if (actionNames.includes('hide_surprise')) {
     decays.push({ key: 'anticipation', delta: -0.08, reasonCode: 'action', reasonText: '把惊喜藏好了' });
   }
-
   for (const d of decays) {
     const applied = await applyDeltas([{ ...d, source: 'action' }]);
     for (const a of applied) satisfaction.push(`${a.key} ${a.from.toFixed(2)}->${a.to.toFixed(2)}`);
@@ -260,11 +425,12 @@ export async function decideAndAct(input: {
 
   log.info('醒来后做了什么', {
     decision,
-    requested,
+    actions: actionNames,
     reason,
     outboxQueued,
     experienceId: experienceId?.slice(0, 8),
-    momentId: momentId?.slice(0, 8),
+    moments: momentIds.length,
+    commented,
     patted,
     satisfaction,
     gateBlocked,
@@ -272,12 +438,14 @@ export async function decideAndAct(input: {
 
   return {
     decision,
+    actions: actionNames,
     reason,
-    message,
+    message: actions.find((a): a is { type: 'reach_out'; message: string } => a.type === 'reach_out')?.message,
     did,
-    surprise,
-    momentId,
+    surprise: surpriseText,
+    momentIds,
     patted,
+    commented,
     modelCalls: 1,
     gateBlocked,
     experienceId,

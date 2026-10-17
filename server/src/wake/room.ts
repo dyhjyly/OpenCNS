@@ -68,6 +68,11 @@ export async function buildRoomPack(): Promise<RoomPack> {
     `select decision, skipped_reason, created_at from wake_log order by created_at desc limit 1`,
   );
 
+  // 她最近在朋友圈的动静：他要在这里看到，才谈得上"自己决定回不回"
+  const { recentHumanActivity, recentSelfMoments } = await import('../social/moments.js');
+  const herActivity = await recentHumanActivity(72);
+  const myMoments = await recentSelfMoments(72);
+
   const clock = await getNowSnapshot();
 
   const materials: RoomMaterials = {
@@ -129,6 +134,28 @@ export async function buildRoomPack(): Promise<RoomPack> {
     for (const n of materials.notes) {
       const exp = n.expiresAt ? `（${new Date(n.expiresAt).toISOString().slice(0, 10)} 过期）` : '';
       parts.push(`· ${n.content}${exp}`);
+    }
+    parts.push('');
+  }
+
+  // 朋友圈：只把"发生了什么"摆出来，不催他回
+  const socialLines: string[] = [];
+  for (const p of herActivity.posts) {
+    socialLines.push(`· 她发了一条动态：「${p.content}」（${p.at.slice(5, 16).replace('T', ' ')}）  [id ${p.id}]`);
+  }
+  for (const c of herActivity.comments) {
+    socialLines.push(`· 她评论了你的「${c.head}」：「${c.comment}」  [id ${c.momentId}]`);
+  }
+  for (const l of herActivity.likes) {
+    socialLines.push(`· 她给你的「${l.head}」点了赞`);
+  }
+  if (socialLines.length > 0) {
+    parts.push('【朋友圈里她的动静】', ...socialLines, '');
+  }
+  if (myMoments.length > 0) {
+    parts.push('【你自己最近发的】');
+    for (const m of myMoments) {
+      parts.push(`· 「${m.content}」（${m.at.slice(5, 16).replace('T', ' ')}）  [id ${m.id}]`);
     }
     parts.push('');
   }

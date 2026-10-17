@@ -766,6 +766,14 @@ body.memory-mode .main { min-height: 0; overflow: hidden; display: flex; }
   font-family: var(--f-title); font-weight: 700; font-size: 14.5px; margin: 2px 0 4px;
 }
 .wake-did { font-size: var(--fs-small); line-height: 1.7; opacity: .88 }
+.wake-actions {
+  display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 6px;
+}
+.wake-actions span {
+  font-size: 10.5px; color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  border-radius: 999px; padding: 1px 8px;
+}
 .moment-note {
   font-size: var(--fs-small); line-height: 1.75;
   padding: 10px 12px; border-radius: 12px;

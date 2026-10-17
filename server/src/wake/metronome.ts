@@ -65,18 +65,20 @@ export async function inspectMetronome(): Promise<MetronomeState> {
 /** 记录一次机会窗（无论是否叫醒模型） */
 export async function recordWake(input: {
   decision: string | null;
+  actions?: string[];
   skippedReason?: string;
   signals: unknown;
   modelCalls: number;
   driveSnapshot: unknown;
 }): Promise<number> {
   const row = await one<{ id: string }>(
-    `insert into wake_log (scheduled_at, fired_at, signals, decision, skipped_reason, model_calls, drive_snapshot)
-     values (now(), now(), $1::jsonb, $2, $3, $4, $5::jsonb)
+    `insert into wake_log (scheduled_at, fired_at, signals, decision, actions, skipped_reason, model_calls, drive_snapshot)
+     values (now(), now(), $1::jsonb, $2, $3::jsonb, $4, $5, $6::jsonb)
      returning id`,
     [
       JSON.stringify(input.signals ?? {}),
       input.decision,
+      JSON.stringify(input.actions ?? []),
       input.skippedReason ?? null,
       input.modelCalls,
       JSON.stringify(input.driveSnapshot ?? {}),

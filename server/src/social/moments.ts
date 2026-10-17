@@ -171,6 +171,81 @@ export async function deleteMoment(momentId: string): Promise<void> {
   await query(`update moments set deleted_at = now() where id = $1`, [momentId]);
 }
 
+/** 他醒来时做的社交动作（点赞 / 评论 / 发动态），供决定逻辑调用 */
+export async function likeAsSelf(momentId: string): Promise<{ liked: boolean }> {
+  return toggleLike(momentId, 'self');
+}
+
+export async function commentAsSelf(momentId: string, content: string): Promise<void> {
+  return addComment(momentId, 'self', content);
+}
+
+/**
+ * 她最近在朋友圈的动静 —— 他下次醒来要在房间里看到这些东西，
+ * 然后自己决定：发不发、看不看、回不回。
+ */
+export async function recentHumanActivity(hours = 72): Promise<{
+  posts: { id: string; content: string; at: string }[];
+  comments: { momentId: string; head: string; comment: string; at: string }[];
+  likes: { momentId: string; head: string; at: string }[];
+}> {
+  try {
+    const posts = await many<{ id: string; content: string; at: string }>(
+      `select id, left(content, 120) as content, created_at as at
+         from moments
+        where author = 'human' and deleted_at is null
+          and created_at > now() - ($1 || ' hours')::interval
+        order by created_at desc limit 5`,
+      [String(hours)],
+    );
+
+    const comments = await many<{ moment_id: string; head: string; comment: string; at: string }>(
+      `select c.moment_id, left(m.content, 40) as head, left(c.content, 200) as comment, c.created_at as at
+         from moment_comments c
+         join moments m on m.id = c.moment_id
+        where c.author = 'human' and m.deleted_at is null
+          and c.created_at > now() - ($1 || ' hours')::interval
+        order by c.created_at desc limit 5`,
+      [String(hours)],
+    );
+
+    const likes = await many<{ moment_id: string; head: string; at: string }>(
+      `select l.moment_id, left(m.content, 40) as head, l.created_at as at
+         from moment_likes l
+         join moments m on m.id = l.moment_id
+        where l.by_who = 'human' and m.author = 'self' and m.deleted_at is null
+          and l.created_at > now() - ($1 || ' hours')::interval
+        order by l.created_at desc limit 5`,
+      [String(hours)],
+    );
+
+    return {
+      posts,
+      comments: comments.map((c) => ({ momentId: c.moment_id, head: c.head, comment: c.comment, at: c.at })),
+      likes: likes.map((l) => ({ momentId: l.moment_id, head: l.head, at: l.at })),
+    };
+  } catch (err) {
+    log.warn('读她的朋友圈动态失败', errFields(err));
+    return { posts: [], comments: [], likes: [] };
+  }
+}
+
+/** 他最近发过的动态（避免重复，也让他知道自己上一条写了什么） */
+export async function recentSelfMoments(hours = 72): Promise<{ id: string; content: string; at: string }[]> {
+  try {
+    return await many<{ id: string; content: string; at: string }>(
+      `select id, left(content, 120) as content, created_at as at
+         from moments
+        where author = 'self' and deleted_at is null
+          and created_at > now() - ($1 || ' hours')::interval
+        order by created_at desc limit 5`,
+      [String(hours)],
+    );
+  } catch {
+    return [];
+  }
+}
+
 /* ─────────── 拍一拍 ─────────── */
 
 export async function pat(input: {
