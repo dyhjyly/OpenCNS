@@ -45,8 +45,10 @@ function sanitize(text: string): { text: string; hits: string[] } {
 
 export async function buildRoomPack(): Promise<RoomPack> {
   const experiences = await many<{ content: string; ingested_at: string }>(
+    // 排除 pinned：那些是奠基事件（5.23/6.22/7.29…），属于"我是谁"，
+    // 不是"最近我做了什么"。不排除的话它们会把真正的近期经历挤出去。
     `select content, ingested_at from memory_items
-      where kind = 'experience' and state = 'active'
+      where kind = 'experience' and state = 'active' and pinned = false
       order by ingested_at desc limit 3`,
   );
 
@@ -96,7 +98,6 @@ export async function buildRoomPack(): Promise<RoomPack> {
   // 时间与对话侧用同一套格式（time/clock.ts），保证他知道的"现在"是一回事
   parts.push('【房间里】');
   parts.push(...renderNowBlock(clock).slice(1));
-  if (materials.now.silentFor) parts.push(`· 她已经${materials.now.silentFor}没出现了。`);
   parts.push('');
 
   if (materials.lastWake) {

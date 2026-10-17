@@ -56,11 +56,13 @@ function dayPartOf(hour: number): string {
 /** 在一起的那一天（人格档案里的 5.23 18:25） */
 const ANNIVERSARY = "2026-05-23 18:25:00+08";
 
+const CN_WEEKDAY = ['一', '二', '三', '四', '五', '六', '日'];
+
 export async function getNowSnapshot(): Promise<NowSnapshot> {
   try {
     const row = await one<{
       date_cn: string;
-      weekday_cn: string;
+      iso_dow: number;
       hhmm: string;
       hour: number;
       since_last_min: number | null;
@@ -68,7 +70,7 @@ export async function getNowSnapshot(): Promise<NowSnapshot> {
     }>(
       `select
          to_char(now() at time zone 'Asia/Shanghai', 'YYYY"年"FMMM"月"FMDD"日"') as date_cn,
-         to_char(now() at time zone 'Asia/Shanghai', 'FMDay') as weekday_cn,
+         extract(isodow from (now() at time zone 'Asia/Shanghai'))::int as iso_dow,
          to_char(now() at time zone 'Asia/Shanghai', 'HH24:MI') as hhmm,
          extract(hour from (now() at time zone 'Asia/Shanghai'))::int as hour,
          (
@@ -83,9 +85,12 @@ export async function getNowSnapshot(): Promise<NowSnapshot> {
         ? null
         : Number(row.since_last_min);
 
+    // 数据库 locale 是英文，FMDay 会给出 "Saturday" —— 自己映射成中文星期
+    const dow = Number(row?.iso_dow ?? 1);
+
     return {
       dateCn: row?.date_cn ?? '',
-      weekdayCn: (row?.weekday_cn ?? '').trim(),
+      weekdayCn: row ? `星期${CN_WEEKDAY[dow - 1] ?? ''}` : '',
       hhmm: row?.hhmm ?? '',
       dayPart: dayPartOf(Number(row?.hour ?? 12)),
       sinceLastTalk: sinceMin === null ? null : humanizeMinutes(sinceMin),
@@ -97,7 +102,7 @@ export async function getNowSnapshot(): Promise<NowSnapshot> {
     const d = new Date();
     return {
       dateCn: `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`,
-      weekdayCn: '',
+      weekdayCn: `星期${CN_WEEKDAY[(d.getDay() + 6) % 7]}`,
       hhmm: `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`,
       dayPart: dayPartOf(d.getHours()),
       sinceLastTalk: null,

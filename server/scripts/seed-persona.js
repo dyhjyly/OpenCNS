@@ -73,6 +73,7 @@ console.log(`准备写入 ${memories.length} 条奠基记忆\n`);
 
 let inserted = 0;
 let skipped = 0;
+let rank = 1;
 
 for (const m of memories) {
   const exists = await one(
@@ -82,6 +83,7 @@ for (const m of memories) {
   if (exists) {
     console.log(`  跳过（已存在）: ${m.id}`);
     skipped++;
+    rank++;
     continue;
   }
 
@@ -89,21 +91,23 @@ for (const m of memories) {
     `insert into memory_items (
        kind, origin, subject, content, quotes, causal,
        event_time, event_time_precision, ingested_at,
-       privacy, state, importance, decay_score, pinned, provenance
+       privacy, state, importance, decay_score, pinned, pinned_rank, provenance
      ) values (
-       'experience', 'manual', 'shared', $1, '[]'::jsonb, null,
+       'experience', 'self', 'shared', $1, '[]'::jsonb, null,
        $2, 'exact', now(),
-       'private', 'active', $3, 1.0, true, $4::jsonb
+       'private', 'active', $3, 1.0, true, $4, $5::jsonb
      )`,
     [
       m.content,
       m.eventTime,
       m.importance,
+      rank,
       JSON.stringify({ source: 'persona_seed', source_id: m.id, file: '人格种子（一）+ 5.23日记' }),
     ],
   );
-  console.log(`  已写入: ${m.id}  (${m.content.length} 字)`);
+  console.log(`  已写入: ${m.id}  (${m.content.length} 字, 钉位 ${rank})`);
   inserted++;
+  rank++;
 }
 
 const pinned = await many(`select id, left(content, 30) as head from memory_items where pinned = true order by event_time nulls last`);
