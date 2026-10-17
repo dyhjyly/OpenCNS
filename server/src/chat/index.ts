@@ -9,6 +9,8 @@ import { recall, isExplicitRecall, type RecallResult } from '../memory/recall/in
 import { getTimelineLines } from '../memory/timeline/render.js';
 import { buildContextBlock, buildIdentityPrompt } from './prompt.js';
 import { buildCorrectiveMessage, detectFabrication } from './fabrication.js';
+import { getNowSnapshot, renderNowBlock } from '../time/clock.js';
+import { getSetting } from '../settings/index.js';
 import {
   appendMessage,
   closeSession,
@@ -84,12 +86,18 @@ async function prepareTurn(req: ChatRequest): Promise<PreparedTurn> {
   const history = recent.slice(0, -1); // 去掉刚插入的当前这句
 
   const messages: ChatMessage[] = [{ role: 'system', content: buildIdentityPrompt(actors) }];
-  const [timeline, driveHints] = await Promise.all([
+  const [timeline, driveHints, nowSnapshot] = await Promise.all([
     getTimelineLines().catch(() => [] as string[]),
     buildDriveHints().catch(() => [] as string[]),
+    getNowSnapshot(),
   ]);
 
-  let contextBlock = buildContextBlock({ recalled: rec.recalled, timeline, driveHints });
+  let contextBlock = buildContextBlock({
+    recalled: rec.recalled,
+    timeline,
+    driveHints,
+    now: renderNowBlock(nowSnapshot),
+  });
 
   // 召回为空时必须**明说**，否则模型会把"没想起"当成"可以自由发挥"。
   // 实测踩过：召回 0 条时他编出了整套病历（乳腺结节 BI-RADS 3类，
@@ -189,10 +197,9 @@ export async function handleChat(req: ChatRequest): Promise<ChatResponse> {
   const tLlm = Date.now();
   let reply = await chatText(turn.messages, {
     endpoint: 'chat',
-    temperature: 0.8,
-    // 推理型模型会先花一大截预算在思考上（实测 1200 会被吃光、正文为空），
-    // 所以对话这一层给足空间。
-    maxTokens: 4000,
+    temperature: getSetting('chat.temperature', 0.9),
+    // 推理型模型会先花一大截预算在思考上（实测 1200 会被吃光、正文为空）
+    maxTokens: getSetting('llm.chat_max_tokens', 4000),
     label: 'reply',
   });
 
@@ -258,7 +265,12 @@ export async function handleChatStream(req: ChatRequest, res: Response): Promise
   try {
     full = await chatTextStream(
       turn.messages,
-      { endpoint: 'chat', temperature: 0.8, maxTokens: 4000, label: 'reply-stream' },
+      {
+        endpoint: 'chat',
+        temperature: getSetting('chat.temperature', 0.9),
+        maxTokens: getSetting('llm.chat_max_tokens', 4000),
+        label: 'reply-stream',
+      },
       (delta) => {
         if (firstTokenMs === undefined) firstTokenMs = Date.now() - tLlm;
         send('delta', { t: delta });

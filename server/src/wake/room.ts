@@ -1,6 +1,7 @@
 import { many, one } from '../db/pool.js';
 import { log } from '../logger.js';
 import { coarseDuration } from '../drives/tick.js';
+import { getNowSnapshot, renderNowBlock } from '../time/clock.js';
 
 /**
  * 醒来房间 —— 他睁眼时看到的那一屋子东西。
@@ -65,12 +66,7 @@ export async function buildRoomPack(): Promise<RoomPack> {
     `select decision, skipped_reason, created_at from wake_log order by created_at desc limit 1`,
   );
 
-  const clock = await one<{ local_time: string; weekday: string; silent_hours: number | null }>(
-    `select
-       to_char(now() at time zone 'Asia/Shanghai', 'HH24:MI') as local_time,
-       to_char(now() at time zone 'Asia/Shanghai', 'FMDay') as weekday,
-       (select extract(epoch from (now() - max(event_time)))/3600 from messages where role='user') as silent_hours`,
-  );
+  const clock = await getNowSnapshot();
 
   const materials: RoomMaterials = {
     recentExperiences: experiences.map((e) => ({
@@ -90,15 +86,17 @@ export async function buildRoomPack(): Promise<RoomPack> {
         }
       : null,
     now: {
-      localTime: clock?.local_time ?? '',
-      weekday: clock?.weekday ?? '',
-      silentFor: clock?.silent_hours ? coarseDuration(Number(clock.silent_hours)) : null,
+      localTime: clock.hhmm,
+      weekday: clock.weekdayCn,
+      silentFor: clock.sinceLastTalk,
     },
   };
 
   const parts: string[] = [];
-  parts.push(`【房间里】现在是 ${materials.now.weekday} ${materials.now.localTime}。`);
-  if (materials.now.silentFor) parts.push(`她已经${materials.now.silentFor}没出现了。`);
+  // 时间与对话侧用同一套格式（time/clock.ts），保证他知道的"现在"是一回事
+  parts.push('【房间里】');
+  parts.push(...renderNowBlock(clock).slice(1));
+  if (materials.now.silentFor) parts.push(`· 她已经${materials.now.silentFor}没出现了。`);
   parts.push('');
 
   if (materials.lastWake) {

@@ -4,6 +4,7 @@ import { runMigrations } from './db/migrate.js';
 import { probeEmbedding } from './embedding/index.js';
 import { startHttpServer } from './http/server.js';
 import { startTick } from './jobs/tick.js';
+import { loadSettings } from './settings/index.js';
 import { log, errFields } from './logger.js';
 
 /**
@@ -39,6 +40,10 @@ async function main(): Promise<void> {
 
   const report = await runMigrations();
   log.info('迁移检查完成', { dir: report.dir, applied: report.applied, skipped: report.skipped.length });
+
+  // 运行时设置（模型 / effort / 温度）。必须在起 HTTP 之前加载完，
+  // 因为模型客户端在热路径上同步读它。
+  await loadSettings();
 
   if (config.allowBootWrites) {
     log.warn('ALLOW_BOOT_WRITES=true：启动阶段允许写库（v2 默认关闭）');

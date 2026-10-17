@@ -251,6 +251,63 @@ export function startHttpServer(): Server {
     }
   });
 
+  app.get('/admin/settings', requireToken, async (_req, res) => {
+    try {
+      const { snapshot, EDITABLE_KEYS } = await import('../settings/index.js');
+      return res.json({ ok: true, editable: EDITABLE_KEYS, ...(await snapshot()) });
+    } catch (err) {
+      return res.status(500).json(errFields(err));
+    }
+  });
+
+  app.put('/admin/settings', requireToken, async (req, res) => {
+    /**
+     * 改模型 / effort / 温度 / 输出上限，立刻生效（不用重启）。
+     * 这是给前端准备的入口：
+     *   { "llm.chat_model": "deepseek-v4-pro", "llm.chat_effort": "max" }
+     */
+    try {
+      const { setSetting, EDITABLE_KEYS } = await import('../settings/index.js');
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const editable = new Set<string>(EDITABLE_KEYS);
+
+      const accepted: Record<string, unknown> = {};
+      const rejected: string[] = [];
+      for (const [key, value] of Object.entries(body)) {
+        if (!editable.has(key)) {
+          rejected.push(key);
+          continue;
+        }
+        accepted[key] = value;
+      }
+
+      // 模型名先校验再写库：否则一个错字会被写进设置，下一轮对话直接崩。
+      const modelKeys = ['llm.chat_model', 'llm.cognitive_model'] as const;
+      const wanted = modelKeys
+        .map((k) => accepted[k])
+        .filter((m): m is string => typeof m === 'string');
+      if (wanted.length > 0) {
+        const { listModels } = await import('../llm/client.js');
+        const known = await listModels().catch(() => null);
+        const bad = known ? wanted.filter((m) => !known.includes(m)) : [];
+        if (bad.length > 0) {
+          return res.status(400).json({ error: 'unknown_model', bad, available: known });
+        }
+      }
+
+      const applied: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(accepted)) {
+        await setSetting(key, value);
+        applied[key] = value;
+      }
+
+      return res.json({ ok: true, applied, rejected });
+    } catch (err) {
+      log.error('更新设置失败', errFields(err));
+      return res.status(500).json(errFields(err));
+    }
+  });
+
   app.post('/admin/wake', requireToken, async (req, res) => {
     /**
      * 手动触发一次唤醒回路，便于验收与补跑：

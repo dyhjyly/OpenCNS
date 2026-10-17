@@ -1,5 +1,6 @@
 import { config, type LlmEndpoint } from '../config.js';
 import { log, errFields } from '../logger.js';
+import { getSetting } from '../settings/index.js';
 import { extractJson } from './json.js';
 
 export { extractJson, repairTruncatedJson } from './json.js';
@@ -13,6 +14,9 @@ export { extractJson, repairTruncatedJson } from './json.js';
  *   - 各家 baseUrl 缺省时会把 "undefined/chat/completions" 发出去。
  *   - 把 reasoning_content 当正文用（会把思维链写进记忆）。
  * 这里统一收口，并把"用了多少"记进日志，方便盯着月度预算。
+ *
+ * 模型名与 effort 从运行时设置读（见 settings/），所以前端改完立刻生效，
+ * 不用登服务器改 .env 重启。API key / baseUrl 仍然只在环境变量里。
  */
 
 export interface ChatMessage {
@@ -32,10 +36,27 @@ export interface ChatOptions {
   label?: string;
 }
 
-function pick(opts: ChatOptions): LlmEndpoint & { label: string } {
+type ResolvedEndpoint = LlmEndpoint & { label: string; effort?: string };
+
+function pick(opts: ChatOptions): ResolvedEndpoint {
   const which = opts.endpoint ?? 'cognitive';
   const ep = which === 'chat' ? config.chat : config.cognitive;
-  return { ...ep, label: opts.label ?? which };
+  const cognitive = which === 'cognitive';
+
+  const model =
+    opts.model ??
+    getSetting(cognitive ? 'llm.cognitive_model' : 'llm.chat_model', ep.model);
+  const effort = getSetting<string | undefined>(
+    cognitive ? 'llm.cognitive_effort' : 'llm.chat_effort',
+    undefined,
+  );
+
+  return {
+    ...ep,
+    model,
+    effort: effort && ['low', 'high', 'max'].includes(effort) ? effort : undefined,
+    label: opts.label ?? which,
+  };
 }
 
 interface CompletionResponse {
@@ -56,7 +77,7 @@ const MAX_TOKENS_CEILING = 8000;
 const DEFAULT_MAX_TOKENS = 2048;
 
 async function callOnce(
-  ep: LlmEndpoint,
+  ep: ResolvedEndpoint,
   messages: ChatMessage[],
   opts: ChatOptions,
 ): Promise<{ text: string; usage: CompletionResponse['usage'] }> {
@@ -64,25 +85,48 @@ async function callOnce(
     throw new Error(`模型端点配置不完整（baseUrl/apiKey/model 有空值），拒绝发出 "undefined" 请求`);
   }
 
-  const res = await fetch(`${ep.baseUrl}/chat/completions`, {
+  const body: Record<string, unknown> = {
+    model: opts.model ?? ep.model,
+    messages,
+    temperature: opts.temperature ?? 0.3,
+    max_tokens: opts.maxTokens ?? DEFAULT_MAX_TOKENS,
+    stream: false,
+  };
+  // 推理强度（low/high/max）。这是这个端点的扩展参数，不是 OpenAI 标准字段；
+  // 万一换了网关不认，见下面的 400 兜底重试。
+  if (ep.effort) body.effort = ep.effort;
+
+  let res = await fetch(`${ep.baseUrl}/chat/completions`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
       authorization: `Bearer ${ep.apiKey}`,
     },
-    body: JSON.stringify({
-      model: opts.model ?? ep.model,
-      messages,
-      temperature: opts.temperature ?? 0.3,
-      max_tokens: opts.maxTokens ?? DEFAULT_MAX_TOKENS,
-      stream: false,
-    }),
+    body: JSON.stringify(body),
     signal: AbortSignal.timeout(opts.timeoutMs ?? 120_000),
   });
 
+  // effort 不被接受时去掉它重试一次，别因为一个可选参数把整条链路打死
+  if (res.status === 400 && ep.effort) {
+    const peek = await res.clone().text().catch(() => '');
+    if (/effort/i.test(peek)) {
+      log.warn('端点不认 effort 参数，去掉后重试', { label: ep.label });
+      delete body.effort;
+      res = await fetch(`${ep.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${ep.apiKey}`,
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(opts.timeoutMs ?? 120_000),
+      });
+    }
+  }
+
   if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`模型返回 HTTP ${res.status}: ${body.slice(0, 300)}`);
+    const failBody = await res.text().catch(() => '');
+    throw new Error(`模型返回 HTTP ${res.status}: ${failBody.slice(0, 300)}`);
   }
 
   const json = (await res.json()) as CompletionResponse;
@@ -152,6 +196,19 @@ export async function chatJson<T>(messages: ChatMessage[], opts: ChatOptions = {
   return extractJson<T>(text);
 }
 
+/** 端点实际支持哪些模型（用于设置接口的白名单校验，避免把错字写进库） */
+export async function listModels(): Promise<string[]> {
+  const ep = pick({ endpoint: 'chat' });
+  if (!ep.baseUrl || !ep.apiKey) throw new Error('端点配置不完整，无法列模型');
+  const res = await fetch(`${ep.baseUrl}/models`, {
+    headers: { authorization: `Bearer ${ep.apiKey}` },
+    signal: AbortSignal.timeout(20_000),
+  });
+  if (!res.ok) throw new Error(`列模型失败 HTTP ${res.status}`);
+  const json = (await res.json()) as { data?: { id: string }[] };
+  return (json.data ?? []).map((m) => m.id);
+}
+
 /**
  * 流式调用（SSE）。
  *
@@ -170,25 +227,45 @@ export async function chatTextStream(
     throw new Error('模型端点配置不完整（baseUrl/apiKey/model 有空值）');
   }
 
-  const res = await fetch(`${ep.baseUrl}/chat/completions`, {
+  const body: Record<string, unknown> = {
+    model: opts.model ?? ep.model,
+    messages,
+    temperature: opts.temperature ?? 0.8,
+    max_tokens: opts.maxTokens ?? DEFAULT_MAX_TOKENS,
+    stream: true,
+  };
+  if (ep.effort) body.effort = ep.effort;
+
+  let res = await fetch(`${ep.baseUrl}/chat/completions`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
       authorization: `Bearer ${ep.apiKey}`,
     },
-    body: JSON.stringify({
-      model: opts.model ?? ep.model,
-      messages,
-      temperature: opts.temperature ?? 0.8,
-      max_tokens: opts.maxTokens ?? DEFAULT_MAX_TOKENS,
-      stream: true,
-    }),
+    body: JSON.stringify(body),
     signal: AbortSignal.timeout(opts.timeoutMs ?? 300_000),
   });
 
+  if (res.status === 400 && ep.effort) {
+    const peek = await res.clone().text().catch(() => '');
+    if (/effort/i.test(peek)) {
+      log.warn('端点不认 effort 参数，去掉后重试（流式）', { label: ep.label });
+      delete body.effort;
+      res = await fetch(`${ep.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${ep.apiKey}`,
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(opts.timeoutMs ?? 300_000),
+      });
+    }
+  }
+
   if (!res.ok || !res.body) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`模型流式返回 HTTP ${res.status}: ${body.slice(0, 300)}`);
+    const failBody = await res.text().catch(() => '');
+    throw new Error(`模型流式返回 HTTP ${res.status}: ${failBody.slice(0, 300)}`);
   }
 
   const reader = res.body.getReader();
