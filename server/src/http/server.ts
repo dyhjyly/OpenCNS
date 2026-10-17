@@ -4,7 +4,7 @@ import type { Server } from 'node:http';
 import express, { type NextFunction, type Request, type Response } from 'express';
 
 import { config } from '../config.js';
-import { assertDatabaseReady, one, query } from '../db/pool.js';
+import { assertDatabaseReady, many, one, query } from '../db/pool.js';
 import { jobStatus } from '../jobs/runner.js';
 import { log, errFields } from '../logger.js';
 
@@ -378,6 +378,78 @@ export function startHttpServer(): Server {
       return res.json({ metronome: await inspectMetronome(), recent, counts });
     } catch (err) {
       return res.status(500).json(errFields(err));
+    }
+  });
+
+  app.get('/memory/starmap', requireToken, async (_req, res) => {
+    try {
+      const { getStarMap } = await import('../memory/starmap.js');
+      const map = await getStarMap();
+      res.setHeader('cache-control', 'private, max-age=60');
+      return res.json({ ok: true, ...map });
+    } catch (err) {
+      log.error('星图接口失败', errFields(err));
+      return res.status(500).json(errFields(err));
+    }
+  });
+
+  app.get('/memory/item/:id', requireToken, async (req, res) => {
+    try {
+      const { getMemoryItem } = await import('../memory/starmap.js');
+      const item = await getMemoryItem(String(req.params.id));
+      if (!item) return res.status(404).json({ error: 'not_found' });
+      return res.json({ ok: true, item });
+    } catch (err) {
+      return res.status(500).json(errFields(err));
+    }
+  });
+
+  app.get('/memory/search', requireToken, async (req, res) => {
+    try {
+      const { searchMemories } = await import('../memory/starmap.js');
+      const q = typeof req.query.q === 'string' ? req.query.q : undefined;
+      const kind = typeof req.query.kind === 'string' ? req.query.kind : undefined;
+      const from = typeof req.query.from === 'string' ? req.query.from : undefined;
+      const to = typeof req.query.to === 'string' ? req.query.to : undefined;
+      const limit = req.query.limit ? Number(req.query.limit) : undefined;
+      return res.json({ ok: true, ...(await searchMemories({ q, kind, from, to, limit })) });
+    } catch (err) {
+      return res.status(500).json(errFields(err));
+    }
+  });
+
+  app.get('/admin/usage', requireToken, async (_req, res) => {
+    try {
+      const { getUsageSummary } = await import('../llm/usage.js');
+      return res.json({ ok: true, ...(await getUsageSummary()) });
+    } catch (err) {
+      log.error('用量统计失败', errFields(err));
+      return res.status(500).json(errFields(err));
+    }
+  });
+
+  app.get('/admin/status', requireToken, async (_req, res) => {
+    try {
+      const { getUsageSummary: _u } = await import('../llm/usage.js');
+      const db = await assertDatabaseReady();
+      const { getEmbeddingProvider } = await import('../embedding/index.js');
+      const provider = getEmbeddingProvider();
+      const gate = await (await import('../drives/gates.js')).checkProactiveGates();
+      const jobs = await many<{ job_key: string; status: string; run_count: number; last_error: string | null }>(
+        `select job_key, status, run_count, left(coalesce(last_error,''),80) as last_error from jobs order by job_key`,
+      );
+      const mem = await one<{ n: number }>(`select count(*)::int as n from memory_items`);
+      return res.json({
+        ok: true,
+        db: { ok: true, version: db.version, vector: db.vector },
+        embedding: { provider: provider.name, dim: provider.dim },
+        gates: gate,
+        jobs,
+        memories: mem?.n ?? 0,
+        uptimeSec: Math.round(process.uptime()),
+      });
+    } catch (err) {
+      return res.status(500).json({ ok: false, ...errFields(err) });
     }
   });
 

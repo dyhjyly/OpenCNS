@@ -1,6 +1,7 @@
 import { config, type LlmEndpoint } from '../config.js';
 import { log, errFields } from '../logger.js';
 import { getSetting } from '../settings/index.js';
+import { estimateTokens, recordUsage } from './usage.js';
 import { extractJson } from './json.js';
 
 export { extractJson, repairTruncatedJson } from './json.js';
@@ -166,6 +167,16 @@ export async function chatText(messages: ChatMessage[], opts: ChatOptions = {}):
     const started = Date.now();
     try {
       const { text, usage } = await callOnce(ep, messages, { ...opts, maxTokens });
+      // 记账（精确值）：这条路径拿得到服务商返回的 usage
+      recordUsage({
+        endpoint: opts.endpoint ?? 'cognitive',
+        model: opts.model ?? ep.model,
+        label: ep.label,
+        promptTokens: usage?.prompt_tokens ?? 0,
+        completionTokens: usage?.completion_tokens ?? 0,
+        cachedTokens: (usage as { prompt_cache_hit_tokens?: number } | undefined)?.prompt_cache_hit_tokens ?? 0,
+        ms: Date.now() - started,
+      });
       log.debug('模型调用成功', {
         label: ep.label,
         model: opts.model ?? ep.model,
@@ -232,6 +243,7 @@ export async function chatTextStream(
   if (!ep.baseUrl || !ep.apiKey || !ep.model) {
     throw new Error('模型端点配置不完整（baseUrl/apiKey/model 有空值）');
   }
+  const started = Date.now();
 
   const body: Record<string, unknown> = {
     model: opts.model ?? ep.model,
@@ -333,6 +345,27 @@ export async function chatTextStream(
           : m.content.reduce((k, p) => k + (p.type === 'text' ? p.text.length : 0), 0)),
       0,
     ),
+  });
+
+  // 流式拿不到精确 usage，按字数估一个，标记 estimated
+  const promptChars = messages.reduce(
+    (n, m) =>
+      n +
+      (typeof m.content === 'string'
+        ? m.content.length
+        : m.content.reduce((k, p) => k + (p.type === 'text' ? p.text.length : 0), 0)),
+    0,
+  );
+  recordUsage({
+    endpoint: opts.endpoint ?? 'chat',
+    model: opts.model ?? ep.model,
+    label: ep.label,
+    // 提示词几乎全中文，按 0.95 token/字 估
+    promptTokens: Math.round(promptChars * 0.95),
+    completionTokens: estimateTokens(full),
+    reasoningTokens: Math.round(reasoningChars * 0.95),
+    estimated: true,
+    ms: Date.now() - started,
   });
 
   return full;

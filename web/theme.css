@@ -570,4 +570,135 @@ body.chat-mode .apphead { flex: 0 0 auto; }
 }
 .apphead-slot[hidden] { display: none }
 
+/* ═══════════════ 记忆库 · 星图 ═══════════════ */
+body.memory-mode .main { padding: 0; }
+body.memory-mode .app { height: 100dvh; min-height: 0; overflow: hidden; padding-bottom: 0; }
+body.memory-mode .main { min-height: 0; overflow: hidden; display: flex; }
+
+.mem-wrap {
+  flex: 1; min-height: 0; display: flex; flex-direction: column;
+  width: 100%; padding: 0 12px calc(10px + env(safe-area-inset-bottom));
+}
+.mem-tools { display: flex; gap: 8px; padding: 4px 0 8px; }
+.mem-tools input[type="search"] {
+  flex: 1; min-width: 0;
+  padding: 10px 14px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--card); color: var(--text);
+  font-family: var(--f-body); font-size: var(--fs-small); outline: none;
+}
+.mem-tools input::placeholder { color: var(--muted); opacity: .8 }
+.mem-toggle {
+  padding: 0 14px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--card); color: var(--text);
+  font-family: var(--f-title); font-weight: 700; font-size: 12.5px;
+}
+.mem-chips {
+  display: flex; gap: 6px; overflow-x: auto; padding-bottom: 8px;
+  scrollbar-width: none;
+}
+.mem-chips::-webkit-scrollbar { display: none }
+.chip-btn {
+  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 11px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--card);
+  color: var(--muted); font-size: 12px; font-family: var(--f-title); font-weight: 700;
+}
+.chip-btn[aria-pressed="true"] { color: var(--text); border-color: var(--accent) }
+.chip-btn i { width: 8px; height: 8px; border-radius: 50%; display: inline-block }
+
+.mem-stage {
+  position: relative; flex: 1; min-height: 0;
+  border-radius: 20px; overflow: hidden;
+  border: 1px solid var(--line);
+  background: #0d0911;
+}
+.mem-stage canvas { display: block; touch-action: none; }
+.mem-hint {
+  position: absolute; left: 0; right: 0; bottom: 12px;
+  text-align: center; font-size: 11px; letter-spacing: .08em;
+  color: #A295A8; opacity: .85; transition: opacity .6s; pointer-events: none;
+}
+.mem-count {
+  padding: 8px 2px 0; font-size: 11px; color: var(--muted); letter-spacing: .06em;
+}
+
+.mem-list { flex: 1; overflow-y: auto; padding-top: 4px; }
+.mem-row {
+  width: 100%; display: flex; gap: 10px; align-items: baseline; text-align: left;
+  padding: 11px 4px; border: 0; border-bottom: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+  background: transparent; color: var(--text); cursor: pointer;
+}
+.mem-row-date {
+  flex: 0 0 auto; font-family: var(--f-body-en); font-size: 11px;
+  color: var(--muted); letter-spacing: .04em;
+}
+.mem-row-text { font-size: var(--fs-small); line-height: 1.5; overflow: hidden }
+
+/* 底部详情 */
+.sheet {
+  position: fixed; inset: 0; z-index: 70;
+  background: color-mix(in srgb, #000 45%, transparent);
+  display: flex; align-items: flex-end;
+  backdrop-filter: blur(2px);
+}
+.sheet[hidden] { display: none }
+.sheet-inner {
+  width: 100%; max-height: 74vh; overflow-y: auto;
+  background: var(--bg); color: var(--text);
+  border-radius: 22px 22px 0 0; padding: 18px 20px calc(24px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--line);
+  animation: sheetUp .28s cubic-bezier(.2,.9,.25,1);
+}
+@keyframes sheetUp { from { transform: translateY(24px); opacity: .6 } to { transform: none; opacity: 1 } }
+.sheet-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px }
+.sheet-head .tag {
+  font-family: var(--f-title); font-weight: 700; font-size: 12px;
+  border: 1px solid currentColor; border-radius: 999px; padding: 2px 9px;
+}
+.sheet-head .tag.gold { color: #C79A6B }
+.sheet-close {
+  margin-left: auto; width: 30px; height: 30px; border-radius: 50%;
+  border: 1px solid var(--line); background: var(--card); color: var(--muted);
+  font-size: 17px; line-height: 1; cursor: pointer;
+}
+.sheet-date {
+  font-family: var(--f-body-en); font-size: 11.5px; color: var(--muted);
+  letter-spacing: .08em; margin-bottom: 12px;
+}
+.sheet-text { font-size: var(--fs-body); line-height: 1.8; white-space: pre-wrap }
+.sheet-meta {
+  margin-top: 14px; padding-top: 10px; border-top: 1px dashed var(--line);
+  font-size: 11.5px; color: var(--muted);
+}
+
+/* ═══════════════ 工具 ═══════════════ */
+.usage-big {
+  font-family: var(--f-display); font-style: italic;
+  font-size: 44px; line-height: 1; color: var(--accent);
+}
+.bars {
+  display: flex; align-items: flex-end; gap: 10px;
+  height: 96px; padding: 6px 0 0;
+}
+.bar-item {
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px;
+  font-size: 10px; color: var(--muted); font-family: var(--f-body-en);
+}
+.bar {
+  width: 100%; max-width: 26px; border-radius: 6px 6px 3px 3px;
+  background: linear-gradient(to top, var(--accent-soft), var(--accent));
+  opacity: .85;
+}
+.usage-row {
+  display: flex; gap: 14px; justify-content: space-between;
+  margin-top: 10px; font-size: 11.5px; color: var(--muted);
+}
+.mini {
+  border: 1px solid var(--line); border-radius: 10px;
+  background: var(--bg2); color: var(--text);
+  padding: 6px 14px; cursor: pointer;
+  font-family: var(--f-title); font-weight: 700; font-size: 12.5px;
+}
+
+
 
