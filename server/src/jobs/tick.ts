@@ -1,6 +1,7 @@
 import os from 'node:os';
 
 import { log, errFields } from '../logger.js';
+import { getEmbeddingProvider } from '../embedding/index.js';
 import { checkProactiveGates } from '../drives/gates.js';
 import { runDriveTick } from '../drives/tick.js';
 import { runWakeCycle } from '../wake/index.js';
@@ -33,6 +34,24 @@ const TICK_INTERVAL_MS = 30_000;
 
 function buildJobs(): JobDefinition[] {
   return [
+    {
+      // 保活 bge-m3：它闲置一会儿就会被 Ollama 卸载，下一次召回要重新载入
+      // （实测冷启动 8~14 秒，直接把一轮对话拖到 40 秒以上）。
+      // 每 10 分钟喂它一个短句，成本可以忽略，换来召回的稳定延迟。
+      key: 'embed_keepalive',
+      kind: 'observability',
+      everyMs: 10 * 60_000,
+      async run() {
+        const started = Date.now();
+        const provider = getEmbeddingProvider();
+        const [vec] = await provider.embed(['保活']);
+        log.info('embedding 保活', {
+          provider: provider.name,
+          dim: vec?.length ?? 0,
+          ms: Date.now() - started,
+        });
+      },
+    },
     {
       key: 'heartbeat',
       kind: 'observability',

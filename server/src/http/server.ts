@@ -303,6 +303,30 @@ export function startHttpServer(): Server {
     }
   });
 
+  app.post('/chat/stream', requireToken, async (req, res) => {
+    /**
+     * SSE 流式对话：逐字推送，感知延迟从几十秒降到一两秒。
+     * 事件：meta（会话/召回信息）→ delta（逐字）→ done（完整结果）| error
+     */
+    try {
+      const body = (req.body ?? {}) as { message?: string; sessionId?: string; endSession?: boolean };
+      if (!body.message || !body.message.trim()) {
+        return res.status(400).json({ error: 'message_required' });
+      }
+      const { handleChatStream } = await import('../chat/index.js');
+      await handleChatStream(
+        { message: body.message, sessionId: body.sessionId, endSession: body.endSession },
+        res,
+      );
+    } catch (err) {
+      log.error('流式对话失败', { requestId: (req as WithId).id, ...errFields(err) });
+      if (!res.headersSent) {
+        return res.status(500).json({ error: 'chat_stream_failed', requestId: (req as WithId).id });
+      }
+      res.end();
+    }
+  });
+
   app.use((req, res) => {
     res.status(404).json({ error: 'not_found', path: req.path });
   });
@@ -312,8 +336,12 @@ export function startHttpServer(): Server {
     if (!res.headersSent) res.status(500).json({ error: 'internal_error', requestId: (req as WithId).id });
   });
 
-  const server = app.listen(config.port, () => {
-    log.info('HTTP 已监听', { port: config.port, apiTokenRequired: Boolean(config.apiToken) });
+  const server = app.listen(config.port, config.host, () => {
+    log.info('HTTP 已监听', {
+      host: config.host,
+      port: config.port,
+      apiTokenRequired: Boolean(config.apiToken),
+    });
   });
 
   return server;

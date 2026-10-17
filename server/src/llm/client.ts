@@ -151,3 +151,96 @@ export async function chatJson<T>(messages: ChatMessage[], opts: ChatOptions = {
   const text = await chatText(messages, opts);
   return extractJson<T>(text);
 }
+
+/**
+ * 流式调用（SSE）。
+ *
+ * 为什么要它：主模型是推理型的，完整一轮可能要几十秒。总量不会因为流式变小，
+ * 但**第一个字**可以在一两秒内出来 —— 感知延迟天差地别。
+ *
+ * 注意：这里不重试。流式一旦开始推送，重试会把已经吐出去的文字重复一遍。
+ */
+export async function chatTextStream(
+  messages: ChatMessage[],
+  opts: ChatOptions,
+  onDelta: (text: string) => void,
+): Promise<string> {
+  const ep = pick({ ...opts, label: opts.label ?? 'stream' });
+  if (!ep.baseUrl || !ep.apiKey || !ep.model) {
+    throw new Error('模型端点配置不完整（baseUrl/apiKey/model 有空值）');
+  }
+
+  const res = await fetch(`${ep.baseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      authorization: `Bearer ${ep.apiKey}`,
+    },
+    body: JSON.stringify({
+      model: opts.model ?? ep.model,
+      messages,
+      temperature: opts.temperature ?? 0.8,
+      max_tokens: opts.maxTokens ?? DEFAULT_MAX_TOKENS,
+      stream: true,
+    }),
+    signal: AbortSignal.timeout(opts.timeoutMs ?? 300_000),
+  });
+
+  if (!res.ok || !res.body) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`模型流式返回 HTTP ${res.status}: ${body.slice(0, 300)}`);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let full = '';
+  let reasoningChars = 0;
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true }).replace(/\r/g, '');
+
+    let sep = buffer.indexOf('\n\n');
+    while (sep >= 0) {
+      const frame = buffer.slice(0, sep);
+      buffer = buffer.slice(sep + 2);
+
+      for (const rawLine of frame.split('\n')) {
+        const line = rawLine.trim();
+        if (!line.startsWith('data:')) continue;
+        const payload = line.slice(5).trim();
+        if (!payload || payload === '[DONE]') continue;
+        try {
+          const json = JSON.parse(payload) as {
+            choices?: { delta?: { content?: string; reasoning_content?: string } }[];
+          };
+          const delta = json.choices?.[0]?.delta;
+          if (delta?.reasoning_content) reasoningChars += delta.reasoning_content.length;
+          const piece = delta?.content ?? '';
+          if (piece) {
+            full += piece;
+            onDelta(piece);
+          }
+        } catch {
+          /* 半截的帧忽略即可，下一轮会拼上 */
+        }
+      }
+      sep = buffer.indexOf('\n\n');
+    }
+  }
+
+  if (!full.trim()) {
+    throw new Error(`流式返回为空（推理内容 ${reasoningChars} 字，可能预算被思考吃光）`);
+  }
+
+  log.debug('流式调用完成', {
+    label: ep.label,
+    replyChars: full.length,
+    reasoningChars,
+    promptChars: messages.reduce((n, m) => n + m.content.length, 0),
+  });
+
+  return full;
+}

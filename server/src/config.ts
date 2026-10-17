@@ -10,6 +10,9 @@ const RawSchema = z
   .object({
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
     PORT: z.coerce.number().int().positive().default(3000),
+    // 默认只绑回环：对外一律走 nginx。绑 0.0.0.0 等于把一个没有登录态的服务
+    // 直接挂到公网上，只靠一个 Bearer token 挡着不合适。
+    HOST: z.string().default('127.0.0.1'),
     LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
     TIMEZONE: z.string().default('Asia/Shanghai'),
 
@@ -86,6 +89,7 @@ export const config = {
   env: raw.NODE_ENV,
   isProduction: raw.NODE_ENV === 'production',
   port: raw.PORT,
+  host: raw.HOST,
   logLevel: raw.LOG_LEVEL,
   timezone: raw.TIMEZONE,
 
