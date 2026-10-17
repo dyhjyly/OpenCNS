@@ -138,10 +138,19 @@ export async function buildRoomPack(): Promise<RoomPack> {
     parts.push('');
   }
 
-  // 朋友圈：只把"发生了什么"摆出来，不催他回
+  // 朋友圈：只把"发生了什么"摆出来，不催他回。
+  // 注意：pg 把 timestamptz 解析成 Date 对象，不是字符串，别直接 .slice
+  const fmtAt = (v: unknown) => {
+    try {
+      return new Date(v as string | number | Date).toISOString().slice(5, 16).replace('T', ' ');
+    } catch {
+      return '';
+    }
+  };
+
   const socialLines: string[] = [];
   for (const p of herActivity.posts) {
-    socialLines.push(`· 她发了一条动态：「${p.content}」（${p.at.slice(5, 16).replace('T', ' ')}）  [id ${p.id}]`);
+    socialLines.push(`· 她发了一条动态：「${p.content}」（${fmtAt(p.at)}）  [id ${p.id}]`);
   }
   for (const c of herActivity.comments) {
     socialLines.push(`· 她评论了你的「${c.head}」：「${c.comment}」  [id ${c.momentId}]`);
@@ -155,7 +164,7 @@ export async function buildRoomPack(): Promise<RoomPack> {
   if (myMoments.length > 0) {
     parts.push('【你自己最近发的】');
     for (const m of myMoments) {
-      parts.push(`· 「${m.content}」（${m.at.slice(5, 16).replace('T', ' ')}）  [id ${m.id}]`);
+      parts.push(`· 「${m.content}」（${fmtAt(m.at)}）  [id ${m.id}]`);
     }
     parts.push('');
   }
