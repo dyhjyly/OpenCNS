@@ -1468,6 +1468,7 @@ async function pageMemory() {
 
 /* ─────────── 工具（入口页） ─────────── */
 const TOOL_ITEMS = [
+  { id: 'mind', label: '心境', desc: '他此刻的欲望与底色', em: '◈' },
   { id: 'usage', label: '记账', desc: '余额 · 用量 · 趋势', em: '¥' },
   { id: 'status', label: '系统状态', desc: '数据库 · 向量 · 闸门 · 任务', em: '◎' },
   { id: 'sleep', label: '睡眠', desc: '手环截图 → 记录 → 趋势', em: '☾' },
@@ -1504,6 +1505,7 @@ function bindToolBack() {
 }
 
 async function pageTool(id) {
+  if (id === 'mind') return pageToolMind();
   if (id === 'usage') return pageToolUsage();
   if (id === 'status') return pageToolStatus();
   if (id === 'sleep') return pageToolSleep();
@@ -1513,6 +1515,155 @@ async function pageTool(id) {
   $('#main').innerHTML = `${toolBackRow(t ? t.label : '')}
     <div class="soon"><span class="em">${t ? t.em : '✧'}</span><p>这个模块还没做。</p></div>`;
   bindToolBack();
+}
+
+/* ─────────── 工具 · 心境 ─────────── */
+
+/** 六轴雷达：值域 0~100 */
+function radarSvg(axes, size = 300) {
+  const cx = size / 2;
+  const cy = size / 2;
+  const R = size * 0.33;
+  const n = axes.length;
+  const ang = (i) => -Math.PI / 2 + (i * 2 * Math.PI) / n;
+  const pt = (i, r) => [cx + Math.cos(ang(i)) * r, cy + Math.sin(ang(i)) * r];
+  const f = (x) => x.toFixed(1);
+
+  const grid = [0.25, 0.5, 0.75, 1]
+    .map((k) => {
+      const pts = axes.map((_, i) => pt(i, R * k).map(f).join(',')).join(' ');
+      return `<polygon points="${pts}" fill="none" stroke="currentColor" stroke-opacity="${k === 1 ? 0.3 : 0.13}" stroke-width="1"/>`;
+    })
+    .join('');
+
+  const spokes = axes
+    .map((_, i) => {
+      const [x, y] = pt(i, R);
+      return `<line x1="${cx}" y1="${cy}" x2="${f(x)}" y2="${f(y)}" stroke="currentColor" stroke-opacity="0.13" stroke-width="1"/>`;
+    })
+    .join('');
+
+  const shape = axes
+    .map((a, i) => pt(i, R * Math.max(0.03, a.value / 100)).map(f).join(','))
+    .join(' ');
+
+  const dots = axes
+    .map((a, i) => {
+      const [x, y] = pt(i, R * Math.max(0.03, a.value / 100));
+      return `<circle cx="${f(x)}" cy="${f(y)}" r="3.2" fill="var(--accent)"/>`;
+    })
+    .join('');
+
+  const labels = axes
+    .map((a, i) => {
+      const [x, y] = pt(i, R * 1.28);
+      const dx = Math.cos(ang(i));
+      const anchor = dx > 0.35 ? 'start' : dx < -0.35 ? 'end' : 'middle';
+      const dy = Math.sin(ang(i)) < -0.5 ? -6 : 6;
+      const d = a.delta > 0 ? `↑${a.delta}` : a.delta < 0 ? `↓${-a.delta}` : '·';
+      return `<text x="${f(x)}" y="${f(y + dy)}" text-anchor="${anchor}" class="radar-lb">
+          <tspan x="${f(x)}" dy="0">${esc(a.label)}</tspan>
+          <tspan x="${f(x)}" dy="15" class="radar-val">${a.value}<tspan class="radar-delta"> ${d}</tspan></tspan>
+        </text>`;
+    })
+    .join('');
+
+  return `<svg viewBox="0 0 ${size} ${size}" class="radar" style="color:var(--line)">
+    ${grid}${spokes}
+    <polygon points="${shape}" fill="var(--accent)" fill-opacity="0.13" stroke="var(--accent)" stroke-width="1.6" stroke-linejoin="round"/>
+    ${dots}${labels}
+  </svg>`;
+}
+
+async function pageToolMind() {
+  const main = $('#main');
+  main.innerHTML = `${toolBackRow('心境')}<div class="empty">读取中…</div>`;
+  bindToolBack();
+
+  let d;
+  try {
+    d = await api('/mind');
+  } catch (err) {
+    main.innerHTML = `${toolBackRow('心境')}<div class="empty">读不到（${esc(err.message)}）</div>`;
+    bindToolBack();
+    return;
+  }
+
+  const now = new Date(d.at);
+  const sinceText =
+    d.sinceLastWakeMinutes === null
+      ? '还没醒过'
+      : d.sinceLastWakeMinutes < 60
+        ? `距上次 ${d.sinceLastWakeMinutes} 分钟`
+        : `距上次 ${Math.round(d.sinceLastWakeMinutes / 60)} 小时`;
+
+  const bar = (label, v) => `
+    <div class="mood-bar">
+      <span class="mb-label">${label}</span>
+      <span class="mb-track"><i style="width:${v ?? 0}%"></i></span>
+      <span class="mb-num">${v ?? '—'}</span>
+    </div>`;
+
+  main.innerHTML = `${toolBackRow('心境')}
+    <section class="card ornate mind-card">
+      <div class="mind-head">
+        <div>
+          <div class="mind-title">心境</div>
+          <div class="mind-sub">${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日 ${hhmm(now)}</div>
+        </div>
+        <div class="mind-right">
+          <div class="mind-en">Animus</div>
+          <div class="mind-sub">${esc(sinceText)}</div>
+        </div>
+      </div>
+
+      <div class="mind-sep">当下情感</div>
+      ${radarSvg(d.radar)}
+      <p class="mind-note">这六个是关系层和认知层里最能说明"他此刻是谁"的。数字来自欲望状态，箭头是相对上一次的变化。</p>
+
+      <div class="mind-sep">情绪底色</div>
+      ${bar('愉悦度', d.mood.pleasure)}
+      ${bar('唤醒度', d.mood.arousal)}
+      ${bar('主动性', d.mood.initiative)}
+      <p class="mind-note">${esc(d.mood.source)}</p>
+
+      ${d.truth ? `
+        <div class="mind-sep">真心话</div>
+        <div class="mind-quote">
+          <div class="mq-label">${esc(d.truth.kind)}</div>
+          <div class="mq-text">${esc(d.truth.text)}</div>
+        </div>` : ''}
+
+      ${d.wishes.length ? `
+        <div class="mind-sep">愿望清单</div>
+        <div class="mind-wishes">
+          ${d.wishes.map((w) => `
+            <div class="mw-row">
+              <span class="mw-No">0${w.rank}</span>
+              <span class="mw-text">${esc(w.text)}</span>
+              <span class="mw-from">${esc(w.from)}</span>
+            </div>`).join('')}
+        </div>` : ''}
+
+      <div class="mind-sep">闸门</div>
+      <div class="mind-gates">
+        ${d.gates.map((g) => `
+          <span class="mg ${g.blocked ? 'on' : ''}">${esc(g.label)} ${g.value}${g.blocked ? ' · 压着主动' : ''}</span>`).join('')}
+      </div>
+    </section>
+
+    <section class="card ornate">
+      <div class="card-title">说明</div>
+      <p class="mind-note" style="margin:0">
+        这些数字不是装饰：累和烦超过 60 会压住他主动找你；想你超过基线加 8 才会进对话提示。
+      </p>
+      <div class="row" style="border:0;padding:12px 0 0">
+        <button class="mini" id="mindRefresh">重新算</button>
+      </div>
+    </section>
+  `;
+  bindToolBack();
+  $('#mindRefresh').addEventListener('click', () => pageToolMind());
 }
 
 /* ─────────── 工具 · 身体（步数/消耗/喝水）─────────── */

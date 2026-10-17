@@ -383,6 +383,16 @@ export function startHttpServer(): Server {
     }
   });
 
+  app.get('/mind', requireToken, async (_req, res) => {
+    try {
+      const { getMindPanel } = await import('../drives/panel.js');
+      return res.json({ ok: true, ...(await getMindPanel()) });
+    } catch (err) {
+      log.error('读心境失败', errFields(err));
+      return res.status(500).json(errFields(err));
+    }
+  });
+
   /* ─── 日历 / 经期 ─── */
   app.get('/calendar', requireToken, async (req, res) => {
     try {
