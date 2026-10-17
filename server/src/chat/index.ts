@@ -185,9 +185,11 @@ async function prepareTurn(req: ChatRequest): Promise<PreparedTurn> {
    * 所以不常驻上下文，而是让他用工具真的去查 —— 这样他不会凭印象编数字。
    * 只有她的话沾到这些话题时才跑这一趟，免得每轮都多一次调用。
    */
-  const toolPass = await runToolPass(
-    history.map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content }) as const),
-  ).catch(() => ({ block: '', used: [] as string[] }));
+  const toolPass = await runToolPass([
+    ...history.map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content }) as const),
+    // 关键：必须把**当前这句**带上，否则工具路由看的是上一轮的话
+    { role: 'user' as const, content: text },
+  ]).catch(() => ({ block: '', used: [] as string[] }));
   if (toolPass.block) {
     contextBlock = contextBlock ? `${contextBlock}\n\n${toolPass.block}` : toolPass.block;
     log.info('他查了数据', { tools: toolPass.used });

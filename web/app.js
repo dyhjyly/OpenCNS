@@ -1528,7 +1528,7 @@ async function pageToolHealth() {
 
   let data;
   try {
-    data = await api('/health?days=14');
+    data = await api('/body?days=14');
   } catch (err) {
     main.innerHTML = `${toolBackRow('身体')}<div class="empty">读不到（${esc(err.message)}）</div>`;
     bindToolBack();
@@ -1571,7 +1571,7 @@ async function pageToolHealth() {
       return v === '' ? null : Number(v);
     };
     try {
-      await api('/health', {
+      await api('/body', {
         method: 'POST',
         body: JSON.stringify({
           day: todayISO(),

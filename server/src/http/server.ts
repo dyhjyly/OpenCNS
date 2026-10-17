@@ -452,7 +452,8 @@ export function startHttpServer(): Server {
   });
 
   /* ─── 身体数据（只留近两周）─── */
-  app.get('/health', requireToken, async (req, res) => {
+  // 注意路径不能叫 /health：上面已经有一个服务健康检查，会抢先匹配
+  app.get('/body', requireToken, async (req, res) => {
     try {
       const { listHealth, KEEP_DAYS } = await import('../health/metrics.js');
       const days = Math.min(KEEP_DAYS, Math.max(1, Number(req.query.days ?? KEEP_DAYS)));
@@ -462,7 +463,7 @@ export function startHttpServer(): Server {
     }
   });
 
-  app.post('/health', requireToken, async (req, res) => {
+  app.post('/body', requireToken, async (req, res) => {
     try {
       const { upsertHealth } = await import('../health/metrics.js');
       const b = (req.body ?? {}) as Record<string, unknown>;
