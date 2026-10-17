@@ -383,6 +383,45 @@ export function startHttpServer(): Server {
     }
   });
 
+  app.post('/sleep/analyze', requireToken, async (req, res) => {
+    try {
+      const uploadId = String((req.body as { uploadId?: string })?.uploadId ?? '');
+      if (!uploadId) return res.status(400).json({ error: 'uploadId_required' });
+      const { analyzeScreenshot } = await import('../health/sleep.js');
+      const out = await analyzeScreenshot(uploadId);
+      if (!out.record) return res.status(422).json({ ok: false, error: out.error, raw: out.raw });
+      return res.json({ ok: true, record: out.record });
+    } catch (err) {
+      log.error('睡眠识别失败', errFields(err));
+      return res.status(500).json(errFields(err));
+    }
+  });
+
+  app.get('/sleep', requireToken, async (req, res) => {
+    try {
+      const days = Math.min(400, Math.max(1, Number(req.query.days ?? 30)));
+      const { listSleep, sleepStats } = await import('../health/sleep.js');
+      return res.json({ ok: true, records: await listSleep(days), stats: await sleepStats(days) });
+    } catch (err) {
+      return res.status(500).json(errFields(err));
+    }
+  });
+
+  app.patch('/sleep/:night', requireToken, async (req, res) => {
+    try {
+      const { patchSleep } = await import('../health/sleep.js');
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const patch: Record<string, unknown> = {};
+      for (const k of ['bedtime', 'wakeTime', 'totalMinutes', 'awakeCount', 'deepMinutes', 'lightMinutes', 'remMinutes', 'awakeMinutes', 'note']) {
+        if (body[k] !== undefined) patch[k] = body[k];
+      }
+      const ok = await patchSleep(String(req.params.night), patch as never);
+      return res.json({ ok });
+    } catch (err) {
+      return res.status(500).json(errFields(err));
+    }
+  });
+
   app.get('/moments', requireToken, async (req, res) => {
     try {
       const { listMoments } = await import('../social/moments.js');

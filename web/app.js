@@ -1470,8 +1470,8 @@ async function pageMemory() {
 const TOOL_ITEMS = [
   { id: 'usage', label: '记账', desc: '余额 · 用量 · 趋势', em: '¥' },
   { id: 'status', label: '系统状态', desc: '数据库 · 向量 · 闸门 · 任务', em: '◎' },
+  { id: 'sleep', label: '睡眠', desc: '手环截图 → 记录 → 趋势', em: '☾' },
   { id: 'health', label: '健康', desc: '还没做', em: '❤', soon: true },
-  { id: 'sleep', label: '睡眠', desc: '手环截图识别 · 趋势', em: '☾', soon: true },
   { id: 'calendar', label: '日历', desc: '事件 · 提醒', em: '▦', soon: true },
   { id: 'games', label: '游戏', desc: '还没想好', em: '✧', soon: true },
 ];
@@ -1506,10 +1506,135 @@ function bindToolBack() {
 async function pageTool(id) {
   if (id === 'usage') return pageToolUsage();
   if (id === 'status') return pageToolStatus();
+  if (id === 'sleep') return pageToolSleep();
   const t = TOOL_ITEMS.find((x) => x.id === id);
   $('#main').innerHTML = `${toolBackRow(t ? t.label : '')}
     <div class="soon"><span class="em">${t ? t.em : '✧'}</span><p>这个模块还没做。</p></div>`;
   bindToolBack();
+}
+
+/* ─────────── 工具 · 睡眠 ─────────── */
+const hmOf = (min) => (min === null || min === undefined ? '—' : `${Math.floor(min / 60)}h${String(min % 60).padStart(2, '0')}`);
+
+async function pageToolSleep() {
+  const main = $('#main');
+  main.innerHTML = `${toolBackRow('睡眠')}<div class="empty">读取中…</div>`;
+  bindToolBack();
+
+  let data;
+  try {
+    data = await api('/sleep?days=30');
+  } catch (err) {
+    main.innerHTML = `${toolBackRow('睡眠')}<div class="empty">读不到（${esc(err.message)}）</div>`;
+    bindToolBack();
+    return;
+  }
+
+  const st = data.stats;
+  const recs = data.records;
+  const maxTotal = Math.max(1, ...st.trend.map((t) => t.totalMinutes || 0));
+
+  main.innerHTML = `
+    ${toolBackRow('睡眠')}
+
+    <section class="card ornate">
+      <div class="card-title">发一张手环截图<span class="caps">自动识别</span></div>
+      <p style="font-size:var(--fs-small);color:var(--muted);margin:0 0 12px">
+        模型会直接从图里读数字。读不准的可以点那条记录改。
+      </p>
+      <div class="row" style="border:0;padding:0">
+        <button class="mini" id="sleepPick">选截图</button>
+        <span class="v" id="sleepState">${st.count} 晚记录</span>
+      </div>
+      <input type="file" id="sleepFile" accept="image/*" hidden />
+    </section>
+
+    <section class="card ornate">
+      <div class="card-title">最近 30 天</div>
+      <div class="usage-row" style="margin-top:0">
+        <span>平均睡 ${hmOf(st.avgTotalMinutes)}</span>
+        <span>深睡 ${st.avgDeepPct ?? '—'}%</span>
+        <span>入睡 ${st.avgBedtime ?? '—'}</span>
+      </div>
+      <div class="bars" style="margin-top:12px">
+        ${st.trend.length === 0 ? '<div class="empty">还没有记录</div>'
+          : st.trend.slice(-14).map((t) => {
+              const h = Math.max(4, Math.round(((t.totalMinutes || 0) / maxTotal) * 70));
+              return `<div class="bar-item" title="${t.night} ${hmOf(t.totalMinutes)} 深睡${t.deepPct ?? '—'}%">
+                <div class="bar" style="height:${h}px"></div>
+                <span>${t.night.slice(5)}</span>
+              </div>`;
+            }).join('')}
+      </div>
+    </section>
+
+    <section class="card ornate">
+      <div class="card-title">每一晚<span class="caps">点一条可以改</span></div>
+      ${recs.length === 0 ? '<div class="empty">还没有记录</div>'
+        : recs.map((r) => {
+            const deepPct = r.deepMinutes && r.totalMinutes ? Math.round((r.deepMinutes / r.totalMinutes) * 100) : null;
+            return `<button class="sleep-row" data-night="${r.night}">
+              <span class="sleep-date">${r.night.slice(5)}</span>
+              <span class="sleep-main">${hmOf(r.totalMinutes)}</span>
+              <span class="sleep-sub">深睡 ${r.deepMinutes !== null ? hmOf(r.deepMinutes) : '—'}${deepPct !== null ? ` (${deepPct}%)` : ''} · 醒 ${r.awakeCount ?? '—'} 次</span>
+              <span class="sleep-bed">${r.bedtime ?? '—'} → ${r.wakeTime ?? '—'}</span>
+            </button>`;
+          }).join('')}
+    </section>
+  `;
+  bindToolBack();
+
+  const fileInput = $('#sleepFile');
+  $('#sleepPick').addEventListener('click', () => fileInput.click());
+
+  fileInput.addEventListener('change', async () => {
+    const raw = (fileInput.files || [])[0];
+    fileInput.value = '';
+    if (!raw) return;
+    const state = $('#sleepState');
+    state.textContent = '识别中…';
+    try {
+      const f = await shrinkImage(raw, 1400, 0.9);
+      const up = await api('/upload', {
+        method: 'POST',
+        body: JSON.stringify({ name: f.name, mime: f.type || 'image/png', dataBase64: await fileToBase64(f) }),
+      });
+      const r = await api('/sleep/analyze', { method: 'POST', body: JSON.stringify({ uploadId: up.id }) });
+      if (!r.ok) {
+        toast('识别失败：' + (r.error || '读不出来'), 3000);
+        state.textContent = `${st.count} 晚记录`;
+        return;
+      }
+      toast(`记好了：${r.record.night} · ${hmOf(r.record.totalMinutes)}`, 2400);
+      pageToolSleep();
+    } catch (err) {
+      toast('失败：' + err.message, 3000);
+      state.textContent = `${st.count} 晚记录`;
+    }
+  });
+
+  main.querySelectorAll('.sleep-row').forEach((b) =>
+    b.addEventListener('click', async () => {
+      const night = b.dataset.night;
+      const r = recs.find((x) => x.night === night);
+      const deep = prompt(`${night} 的深睡是几分钟？（现在 ${r.deepMinutes ?? '未知'}）`, String(r.deepMinutes ?? ''));
+      if (deep === null) return;
+      const total = prompt(`总睡眠是几分钟？（现在 ${r.totalMinutes ?? '未知'}）`, String(r.totalMinutes ?? ''));
+      if (total === null) return;
+      try {
+        await api(`/sleep/${night}`, {
+          method: 'PATCH',
+          body: JSON.stringify({
+            deepMinutes: Number(deep) || null,
+            totalMinutes: Number(total) || null,
+          }),
+        });
+        toast('改好了', 1400);
+        pageToolSleep();
+      } catch (err) {
+        toast('改失败：' + err.message, 2400);
+      }
+    }));
 }
 
 async function pageToolUsage() {
