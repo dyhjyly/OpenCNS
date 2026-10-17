@@ -12,8 +12,16 @@ import { one } from '../db/pool.js';
  */
 
 export const WAKE_INTERVAL_MS = 50 * 60_000;
-/** 她说完话之后，先安静这么久，再开始算 50 分钟 */
-export const QUIET_AFTER_MS = 5 * 60_000;
+/**
+ * 她说完话之后，先安静这么久，再开始算 50 分钟。
+ *
+ * 原本是 5 分钟（构想里写的"对话结束五分钟后"）。但实测下来这太短：
+ * 她聊到一半去倒杯水、看一会儿别的，六七分钟没说话，节拍器就以为"对话结束了"，
+ * 可能在他俩正聊着的时候把他叫醒。
+ *
+ * 15 分钟才更像"她真的不在了"。
+ */
+export const QUIET_AFTER_MS = 15 * 60_000;
 
 export interface MetronomeState {
   now: Date;
@@ -47,8 +55,7 @@ export async function inspectMetronome(): Promise<MetronomeState> {
   let reason = '';
 
   if (silentMs !== null && silentMs < QUIET_AFTER_MS) {
-    reason = '她刚说过话，节拍器静默';
-  } else if (sinceAnchorMs === null) {
+    reason = '她刚说过话，节拍器静默';  } else if (sinceAnchorMs === null) {
     due = true;
     reason = '还没有任何对话记录，可以开第一个机会窗';
   } else if (sinceAnchorMs < WAKE_INTERVAL_MS) {
@@ -70,10 +77,12 @@ export async function recordWake(input: {
   signals: unknown;
   modelCalls: number;
   driveSnapshot: unknown;
+  /** 是不是手动强制叫醒的（room 页要标出来，免得被当成"他自己乱醒"） */
+  forced?: boolean;
 }): Promise<number> {
   const row = await one<{ id: string }>(
-    `insert into wake_log (scheduled_at, fired_at, signals, decision, actions, skipped_reason, model_calls, drive_snapshot)
-     values (now(), now(), $1::jsonb, $2, $3::jsonb, $4, $5, $6::jsonb)
+    `insert into wake_log (scheduled_at, fired_at, signals, decision, actions, skipped_reason, model_calls, drive_snapshot, forced)
+     values (now(), now(), $1::jsonb, $2, $3::jsonb, $4, $5, $6::jsonb, $7)
      returning id`,
     [
       JSON.stringify(input.signals ?? {}),
@@ -82,6 +91,7 @@ export async function recordWake(input: {
       input.skippedReason ?? null,
       input.modelCalls,
       JSON.stringify(input.driveSnapshot ?? {}),
+      input.forced ?? false,
     ],
   );
   return Number(row?.id ?? 0);

@@ -997,7 +997,7 @@ async function pageWake() {
         ? '<div class="empty">还没醒过</div>'
         : r.entries.map((e) => `
           <div class="wake-row">
-            <div class="wake-when">${fmt(e.at)}</div>
+            <div class="wake-when">${fmt(e.at)}${e.forced ? '<span class="wake-forced">手动叫醒</span>' : ''}</div>
             <div class="wake-what">${esc(e.decision ? DECISION_TEXT[e.decision] || e.decision : e.skipped || '什么也没做')}</div>
             ${e.actions && e.actions.length ? `<div class="wake-actions">${
               e.actions.map((a) => `<span>${esc(ACTION_TEXT[a] || a)}</span>`).join('')

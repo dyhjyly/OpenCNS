@@ -75,6 +75,7 @@ export async function runWakeCycle(opts: { force?: boolean } = {}): Promise<Wake
       signals,
       modelCalls: 0,
       driveSnapshot: signals.detail,
+      forced: opts.force ?? false,
     });
     log.info('零成本跳过（没有叫醒模型）', {
       wantHer: Number(signals.wantHer.toFixed(2)),
@@ -94,6 +95,7 @@ export async function runWakeCycle(opts: { force?: boolean } = {}): Promise<Wake
     signals,
     modelCalls: outcome.modelCalls,
     driveSnapshot: { detail: signals.detail, driveHints: [] },
+    forced: opts.force ?? false,
   });
   await saveRoomPack(wakeLogId, pack, pack.rendered);
 
