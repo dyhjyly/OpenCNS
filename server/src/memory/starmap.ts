@@ -52,10 +52,18 @@ export interface StarPoint {
   emotion: { v: number | null; a: number | null };
 }
 
+export interface StarEdge {
+  a: string;
+  b: string;
+  sim: number;
+}
+
 export interface StarMap {
   count: number;
   points: StarPoint[];
   kinds: { kind: string; n: number }[];
+  /** 星座连线：奠基事件 / 情景回忆 各自连最近的几条 */
+  edges: StarEdge[];
 }
 
 const cache = new Map<string, { at: number; data: StarMap }>();
@@ -125,13 +133,40 @@ export async function getStarMap(): Promise<StarMap> {
         group by 1 order by 2 desc`,
     );
 
-    const data: StarMap = { count: points.length, points, kinds: kindRows };
+    /*
+     * 星座连线：让"有故事的星"连起来。
+     * 用向量最近邻（lateral join + <=> 距离），每个种子连最近 3 条。
+     * 种子只有奠基事件、情景回忆、经历这几十条 —— 全部连会织成一张网，看不出形状。
+     */
+    const edgeRows = await many<{ from_id: string; to_id: string; sim: number }>(
+      `select s.id as from_id, nb.id as to_id, (1 - (s.embedding <=> nb.embedding))::real as sim
+         from memory_items s
+         cross join lateral (
+           select n.id, n.embedding
+             from memory_items n
+            where n.id <> s.id
+              and n.embedding is not null
+              and n.state in ('active','archived')
+            order by s.embedding <=> n.embedding
+            limit 3
+         ) nb
+        where s.embedding is not null
+          and s.state in ('active','archived')
+          and (s.pinned or s.kind in ('episode', 'experience'))
+        order by sim desc`,
+    );
+
+    const edges: StarEdge[] = edgeRows
+      .filter((e) => Number(e.sim) > 0.35) // 太弱的连线不如不画
+      .map((e) => ({ a: e.from_id, b: e.to_id, sim: Number(e.sim) }));
+
+    const data: StarMap = { count: points.length, points, kinds: kindRows, edges };
     cache.set(key, { at: Date.now(), data });
-    log.info('星图已重算', { points: points.length, kinds: kindRows.length });
+    log.info('星图已重算', { points: points.length, kinds: kindRows.length, edges: edges.length });
     return data;
   } catch (err) {
     log.error('星图计算失败', errFields(err));
-    return { count: 0, points: [], kinds: [] };
+    return { count: 0, points: [], kinds: [], edges: [] };
   }
 }
 

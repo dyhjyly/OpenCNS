@@ -717,14 +717,46 @@ function pageSoon(title, note, em = 'soon') {
 
 /* ─────────── 记忆库 · 星图 ─────────── */
 const KIND_META = {
-  episode: { label: '情景回忆', color: '#FDF9F0', r: 2.4 },
-  experience: { label: '经历', color: '#A8C4E0', r: 1.9 },
+  episode: { label: '情景回忆', color: '#FDF9F0', r: 2.6 },
+  experience: { label: '经历', color: '#A8C4E0', r: 2.0 },
   semantic: { label: '事实', color: '#C9C4D8', r: 1.5 },
-  note: { label: '便签', color: '#C0A0B8', r: 1.7 },
+  note: { label: '便签', color: '#C0A0B8', r: 1.8 },
 };
 const kindOf = (k) => KIND_META[k] || { label: k, color: '#B9B2C4', r: 1.5 };
 
-let starState = null; // { map, view:{scale,x,y}, filter:Set, canvas... }
+/** 稳定伪随机（同一个 id 永远同一个值），用来给星星加抖动相位 */
+function hash01(s) {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return ((h >>> 0) % 10000) / 10000;
+}
+
+/**
+ * 星级布局：环状星图。
+ *
+ * 角度来自随机投影的方向 —— 语义相近的记忆方向相近，于是会连成**弧**，
+ * 看上去就是星座。半径按类型分层：奠基事件在最中心（亮核），
+ * 情景回忆、经历一圈圈往外，其余事实铺成一圈很厚的环带。
+ */
+function layoutStars(points) {
+  return points.map((p) => {
+    const dx = p.x - 0.5;
+    const dy = p.y - 0.5;
+    const ang = Math.atan2(dy, dx);
+    const j = hash01(p.id);
+    let r;
+    if (p.pinned) r = 0.045 + 0.05 * j;
+    else if (p.kind === 'episode') r = 0.135 + 0.06 * j;
+    else if (p.kind === 'experience') r = 0.25 + 0.08 * j;
+    else r = 0.56 + 0.34 * j;
+    return { ...p, ang, r, phase: j * Math.PI * 2, tw: 0.7 + j * 1.6 };
+  });
+}
+
+let star = null; // 星图运行态
 
 async function pageMemory() {
   const main = $('#main');
@@ -732,18 +764,17 @@ async function pageMemory() {
     <div class="mem-wrap">
       <div class="mem-tools">
         <input type="search" id="memQ" placeholder="在心河里找一段记忆…" />
-        <button class="mem-toggle" id="memView" aria-label="切换视图">列表</button>
+        <button class="mem-toggle" id="memView">列表</button>
       </div>
       <div class="mem-chips" id="memChips"></div>
       <div class="mem-stage" id="memStage">
         <canvas id="memCanvas"></canvas>
-        <div class="mem-hint" id="memHint">按住拖动 · 双指缩放 · 点一颗星看看</div>
+        <div class="mem-hint" id="memHint">拖动 · 双指缩放 · 点星看记忆</div>
       </div>
       <div class="mem-count" id="memCount"></div>
+      <div class="mem-list" id="memList" hidden></div>
     </div>
-    <div class="sheet" id="memSheet" hidden>
-      <div class="sheet-inner" id="memSheetBody"></div>
-    </div>
+    <div class="sheet" id="memSheet" hidden><div class="sheet-inner" id="memSheetBody"></div></div>
   `;
 
   let map;
@@ -759,113 +790,165 @@ async function pageMemory() {
   const hint = $('#memHint');
   const countEl = $('#memCount');
   const chips = $('#memChips');
+  const listEl = $('#memList');
+
+  const pts = layoutStars(map.points);
+  const byId = new Map(pts.map((p) => [p.id, p]));
+  const edges = (map.edges || [])
+    .map((e) => ({ a: byId.get(e.a), b: byId.get(e.b), sim: e.sim }))
+    .filter((e) => e.a && e.b);
 
   const filter = new Set(map.kinds.map((k) => k.kind));
-  const view = { scale: 1, x: 0, y: 0 };
-  starState = { map, view, filter, canvas, stage };
+  const view = { scale: 1, x: 0, y: 0, rot: 0 };
+  const screen = new Map(); // id -> {x,y}（每帧更新，点击命中用）
 
-  chips.innerHTML = map.kinds
-    .map((k) => {
-      const meta = kindOf(k.kind);
-      return `<button class="chip-btn" data-k="${k.kind}" aria-pressed="true">
-        <i style="background:${meta.color}"></i>${meta.label} ${k.n}</button>`;
-    })
-    .join('');
-  chips.querySelectorAll('.chip-btn').forEach((b) =>
-    b.addEventListener('click', () => {
-      const k = b.dataset.k;
-      if (filter.has(k) && filter.size === 1) {
-        filter.clear();
-        map.kinds.forEach((x) => filter.add(x.kind));
-      } else if (filter.has(k)) {
-        filter.delete(k);
-      } else {
-        filter.add(k);
-      }
-      chips.querySelectorAll('.chip-btn').forEach((x) =>
-        x.setAttribute('aria-pressed', String(filter.has(x.dataset.k))));
-      draw();
-    }));
+  star = { map, pts, edges, view, filter, canvas, stage, screen, raf: 0 };
+
+  // ── 筛选 ──
+  const renderChips = () => {
+    chips.innerHTML = map.kinds
+      .map((k) => {
+        const m = kindOf(k.kind);
+        return `<button class="chip-btn" data-k="${k.kind}" aria-pressed="${filter.has(k.kind)}">
+          <i style="background:${m.color}"></i>${m.label} ${k.n}</button>`;
+      })
+      .join('');
+    chips.querySelectorAll('.chip-btn').forEach((b) =>
+      b.addEventListener('click', () => {
+        const k = b.dataset.k;
+        if (filter.has(k) && filter.size === 1) map.kinds.forEach((x) => filter.add(x.kind));
+        else if (filter.has(k)) filter.delete(k);
+        else filter.add(k);
+        renderChips();
+        refreshList();
+      }));
+  };
+  renderChips();
 
   // ── 画布 ──
+  let W = 0, H = 0;
   function resize() {
-    const dpr = Math.min(2.5, window.devicePixelRatio || 1);
-    const w = stage.clientWidth;
-    const h = stage.clientHeight;
-    canvas.width = Math.round(w * dpr);
-    canvas.height = Math.round(h * dpr);
-    canvas.style.width = w + 'px';
-    canvas.style.height = h + 'px';
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    W = stage.clientWidth;
+    H = stage.clientHeight;
+    canvas.width = Math.round(W * dpr);
+    canvas.height = Math.round(H * dpr);
+    canvas.style.width = W + 'px';
+    canvas.style.height = H + 'px';
     const ctx = canvas.getContext('2d');
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    draw();
   }
 
-  function draw() {
-    const w = stage.clientWidth;
-    const h = stage.clientHeight;
+  function project(p, t) {
+    const R = Math.min(W, H) * 0.46;
+    const rot = p.ang + view.rot;
+    const rr = p.r * R * view.scale;
+    return {
+      x: W / 2 + Math.cos(rot) * rr + view.x,
+      y: H / 2 + Math.sin(rot) * rr + view.y,
+    };
+  }
+
+  function frame(t) {
     const ctx = canvas.getContext('2d');
-    ctx.clearRect(0, 0, w, h);
+    const time = t / 1000;
+    view.rot += 0.0009; // 极慢自转，让它像活的
 
-    // 深空底
-    const g = ctx.createRadialGradient(w * 0.5, h * 0.46, 0, w * 0.5, h * 0.46, Math.max(w, h) * 0.75);
-    g.addColorStop(0, '#241733');
-    g.addColorStop(0.45, '#171018');
-    g.addColorStop(1, '#050306');
+    // 底：深空 + 中心光晕
+    ctx.clearRect(0, 0, W, H);
+    const g = ctx.createRadialGradient(W / 2 + view.x, H / 2 + view.y, 0, W / 2 + view.x, H / 2 + view.y, Math.max(W, H) * 0.8);
+    g.addColorStop(0, '#2a1b38');
+    g.addColorStop(0.35, '#1a1020');
+    g.addColorStop(0.75, '#0d0712');
+    g.addColorStop(1, '#040206');
     ctx.fillStyle = g;
-    ctx.fillRect(0, 0, w, h);
+    ctx.fillRect(0, 0, W, H);
 
-    const pad = 26;
-    const span = Math.min(w, h) - pad * 2;
-    const cx = w / 2;
-    const cy = h / 2;
+    const coreGlow = ctx.createRadialGradient(W / 2 + view.x, H / 2 + view.y, 0, W / 2 + view.x, H / 2 + view.y, Math.min(W, H) * 0.20);
+    coreGlow.addColorStop(0, 'rgba(224,180,140,0.18)');
+    coreGlow.addColorStop(1, 'rgba(224,180,140,0)');
+    ctx.fillStyle = coreGlow;
+    ctx.fillRect(0, 0, W, H);
 
-    const visible = map.points.filter((p) => filter.has(p.kind));
-    countEl.textContent = `${visible.length} / ${map.points.length} 颗`;
+    screen.clear();
 
-    // 普通星
-    for (const p of visible) {
-      if (p.pinned) continue;
+    // 星座连线（在星星下面）
+    for (const e of edges) {
+      if (!filter.has(e.a.kind) || !filter.has(e.b.kind)) continue;
+      const pa = project(e.a, time);
+      const pb = project(e.b, time);
+      if (!Number.isFinite(pa.x) || !Number.isFinite(pb.x)) continue;
+      const ctx2 = ctx;
+      const grad = ctx2.createLinearGradient(pa.x, pa.y, pb.x, pb.y);
+      const alpha = Math.min(0.34, 0.08 + (e.sim - 0.3) * 0.5);
+      grad.addColorStop(0, `rgba(243,217,184,${alpha})`);
+      grad.addColorStop(1, `rgba(168,196,224,${alpha * 0.55})`);
+      ctx2.strokeStyle = grad;
+      ctx2.lineWidth = 0.8;
+      ctx2.beginPath();
+      ctx2.moveTo(pa.x, pa.y);
+      ctx2.lineTo(pb.x, pb.y);
+      ctx2.stroke();
+    }
+
+    // 星星
+    for (const p of pts) {
+      if (!filter.has(p.kind)) continue;
+      const s = project(p, time);
+      screen.set(p.id, s);
+      if (s.x < -20 || s.y < -20 || s.x > W + 20 || s.y > H + 20) continue;
+
+      const twinkle = 0.42 + 0.5 * (0.5 + 0.5 * Math.sin(time * p.tw + p.phase));
       const meta = kindOf(p.kind);
-      const sx = cx + (p.x - 0.5) * span * view.scale + view.x;
-      const sy = cy + (p.y - 0.5) * span * view.scale + view.y;
-      if (sx < -10 || sy < -10 || sx > w + 10 || sy > h + 10) continue;
-      ctx.globalAlpha = 0.35 + Math.min(0.55, p.importance * 0.6);
+
+      if (p.pinned) {
+        const rr = 9 + 1.6 * Math.sin(time * 1.6 + p.phase);
+        const rg = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, rr * 2.2);
+        rg.addColorStop(0, `rgba(243,217,184,${0.85 * twinkle + 0.15})`);
+        rg.addColorStop(0.35, `rgba(224,180,140,${0.3 * twinkle})`);
+        rg.addColorStop(1, 'rgba(224,180,140,0)');
+        ctx.fillStyle = rg;
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, rr * 2.2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#FBF0DC';
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+        continue;
+      }
+
+      const rad = meta.r * Math.min(2.2, Math.max(0.9, view.scale));
+      ctx.globalAlpha = Math.min(1, twinkle * (0.55 + p.importance * 0.5));
       ctx.fillStyle = meta.color;
       ctx.beginPath();
-      ctx.arc(sx, sy, meta.r * Math.min(1.8, view.scale), 0, Math.PI * 2);
+      ctx.arc(s.x, s.y, rad, 0, Math.PI * 2);
       ctx.fill();
+      ctx.globalAlpha = 1;
     }
 
-    // 被钉住的（奠基事件）：加光晕
-    for (const p of visible) {
-      if (!p.pinned) continue;
-      const sx = cx + (p.x - 0.5) * span * view.scale + view.x;
-      const sy = cy + (p.y - 0.5) * span * view.scale + view.y;
-      ctx.globalAlpha = 1;
-      const rg = ctx.createRadialGradient(sx, sy, 0, sx, sy, 16);
-      rg.addColorStop(0, 'rgba(224,180,140,0.95)');
-      rg.addColorStop(0.4, 'rgba(224,180,140,0.35)');
-      rg.addColorStop(1, 'rgba(224,180,140,0)');
-      ctx.fillStyle = rg;
-      ctx.beginPath();
-      ctx.arc(sx, sy, 16, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = '#F3D9B8';
-      ctx.beginPath();
-      ctx.arc(sx, sy, 2.6, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    ctx.globalAlpha = 1;
+    const visible = pts.filter((p) => filter.has(p.kind)).length;
+    countEl.textContent = `${visible} / ${pts.length} 颗 · ${edges.length} 条星座线`;
+
+    star.raf = requestAnimationFrame(frame);
   }
 
-  // ── 交互：拖动 / 双指缩放 / 点选 ──
+  function start() {
+    cancelAnimationFrame(star.raf);
+    resize();
+    star.raf = requestAnimationFrame(frame);
+  }
+  function stop() {
+    cancelAnimationFrame(star.raf);
+  }
+
+  // ── 交互 ──
   let dragging = false;
   let last = null;
   let pinch = null;
   let moved = 0;
 
-  const pt = (e) => {
+  const ptOf = (e) => {
     const r = canvas.getBoundingClientRect();
     return { x: e.clientX - r.left, y: e.clientY - r.top };
   };
@@ -874,24 +957,20 @@ async function pageMemory() {
     canvas.setPointerCapture(e.pointerId);
     dragging = true;
     moved = 0;
-    last = pt(e);
-    hint.style.opacity = '0';
+    last = ptOf(e);
+    hint.style.display = 'none';
   });
   canvas.addEventListener('pointermove', (e) => {
     if (!dragging || pinch) return;
-    const p = pt(e);
+    const p = ptOf(e);
     view.x += p.x - last.x;
     view.y += p.y - last.y;
     moved += Math.abs(p.x - last.x) + Math.abs(p.y - last.y);
     last = p;
-    draw();
   });
   canvas.addEventListener('pointerup', (e) => {
     dragging = false;
-    if (moved < 8) {
-      const p = pt(e);
-      pickAt(p.x, p.y);
-    }
+    if (moved < 10) pickAt(ptOf(e));
   });
   canvas.addEventListener('pointercancel', () => { dragging = false; });
 
@@ -906,29 +985,50 @@ async function pageMemory() {
       e.preventDefault();
       const [a, b] = e.touches;
       const d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
-      view.scale = Math.max(0.6, Math.min(9, pinch.scale * (d / pinch.d)));
-      draw();
+      view.scale = Math.max(0.5, Math.min(9, pinch.scale * (d / pinch.d)));
     }
   }, { passive: false });
   canvas.addEventListener('touchend', () => { pinch = null; });
 
-  function pickAt(px, py) {
-    const w = stage.clientWidth;
-    const h = stage.clientHeight;
-    const pad = 26;
-    const span = Math.min(w, h) - pad * 2;
-    const cx = w / 2;
-    const cy = h / 2;
-    let best = null;
-    let bestD = 18;
-    for (const p of map.points) {
-      if (!filter.has(p.kind)) continue;
-      const sx = cx + (p.x - 0.5) * span * view.scale + view.x;
-      const sy = cy + (p.y - 0.5) * span * view.scale + view.y;
-      const d = Math.hypot(sx - px, sy - py);
-      if (d < bestD) { bestD = d; best = p; }
+  /**
+   * 命中：半径放宽到 34px，并且**所有**落在范围内的星都收进来按重要度排序。
+   * 之前只取"最近的一颗"，缩放到很小时一堆星重叠，点到哪颗全看运气 ——
+   * 她说的"每次都不一样"就是这个。现在多了就给个选择列表。
+   */
+  function pickAt(p) {
+    const hits = [];
+    for (const s of pts) {
+      if (!filter.has(s.kind)) continue;
+      const pos = screen.get(s.id);
+      if (!pos) continue;
+      const d = Math.hypot(pos.x - p.x, pos.y - p.y);
+      if (d < 34) hits.push({ s, d });
     }
-    if (best) openStar(best.id);
+    if (!hits.length) {
+      hint.textContent = '这附近没有星，换个地方点点';
+      hint.style.display = '';
+      return;
+    }
+    hits.sort((a, b) => (b.s.pinned - a.s.pinned) || (b.s.importance - a.s.importance) || (a.d - b.d));
+    if (hits.length === 1) return openStar(hits[0].s.id);
+
+    // 多颗重叠 -> 让她选
+    const sheet = $('#memSheet');
+    const body = $('#memSheetBody');
+    sheet.hidden = false;
+    body.innerHTML = `
+      <div class="sheet-head"><span class="tag">这里有好几颗星</span>
+        <button class="sheet-close">×</button>
+      </div>
+      ${hits.slice(0, 8).map((h) => `
+        <button class="pick-row" data-id="${h.s.id}">
+          <i style="background:${kindOf(h.s.kind).color}"></i>
+          <span>${esc(h.s.head)}</span>
+        </button>`).join('')}
+    `;
+    body.querySelector('.sheet-close').addEventListener('click', () => { sheet.hidden = true; });
+    body.querySelectorAll('.pick-row').forEach((b) =>
+      b.addEventListener('click', () => openStar(b.dataset.id)));
   }
 
   async function openStar(id) {
@@ -939,94 +1039,147 @@ async function pageMemory() {
     try {
       const { item } = await api(`/memory/item/${id}`);
       const when = item.event_time || item.ingested_at || '';
-      const meta = kindOf(String(item.kind));
+      const m = kindOf(String(item.kind));
       body.innerHTML = `
         <div class="sheet-head">
-          <span class="tag" style="color:${meta.color}">${meta.label}</span>
+          <span class="tag" style="color:${m.color}">${m.label}</span>
           ${item.pinned ? '<span class="tag gold">奠基</span>' : ''}
-          <button class="sheet-close" aria-label="关闭">×</button>
+          <button class="sheet-close">×</button>
         </div>
         <div class="sheet-date">${esc(String(when).slice(0, 16).replace('T', ' '))}</div>
         <div class="sheet-text">${esc(String(item.content))}</div>
-        <div class="sheet-meta">
-          重要度 ${Number(item.importance).toFixed(2)} · 想起过 ${item.recall_count} 次 ·
-          状态 ${esc(String(item.state))}
-        </div>
+        <div class="sheet-meta">重要度 ${Number(item.importance).toFixed(2)} · 想起过 ${item.recall_count} 次 · 状态 ${esc(String(item.state))}</div>
       `;
       body.querySelector('.sheet-close').addEventListener('click', () => { sheet.hidden = true; });
     } catch (err) {
       body.innerHTML = `<div class="empty">读不到（${esc(err.message)}）</div>`;
-      body.querySelector('.empty').addEventListener('click', () => { sheet.hidden = true; });
     }
   }
   $('#memSheet').addEventListener('click', (e) => {
     if (e.target.id === 'memSheet') $('#memSheet').hidden = true;
   });
 
-  // ── 列表视图 ──
+  // ── 列表（跟着筛选走） ──
   let listMode = false;
+  let listRows = [];
+
+  async function loadList(q) {
+    try {
+      const r = await api(`/memory/search?limit=60${q ? `&q=${encodeURIComponent(q)}` : ''}`);
+      listRows = r.rows;
+      renderList();
+    } catch (err) {
+      listEl.innerHTML = `<div class="empty">查询失败（${esc(err.message)}）</div>`;
+    }
+  }
+
+  function renderList() {
+    const rows = listRows.filter((r) => filter.has(String(r.kind)));
+    listEl.innerHTML = rows.length
+      ? rows.map((r) => `
+        <button class="mem-row" data-id="${r.id}">
+          <span class="mem-row-date">${esc(String(r.event_time || r.ingested_at || '').slice(0, 10))}</span>
+          <span class="mem-row-kind" style="color:${kindOf(String(r.kind)).color}">${kindOf(String(r.kind)).label}</span>
+          <span class="mem-row-text">${esc(String(r.head || ''))}</span>
+        </button>`).join('')
+      : '<div class="empty">这个筛选下没有记忆</div>';
+    listEl.querySelectorAll('.mem-row').forEach((b) =>
+      b.addEventListener('click', () => openStar(b.dataset.id)));
+  }
+
+  function refreshList() {
+    if (listMode) renderList();
+  }
+
   $('#memView').addEventListener('click', () => {
     listMode = !listMode;
     $('#memView').textContent = listMode ? '星图' : '列表';
     stage.hidden = listMode;
-    chips.hidden = listMode;
-    countEl.hidden = listMode;
-    if (listMode) renderList($('#memQ').value);
-    else { stage.hidden = false; resize(); }
+    chips.querySelectorAll('.chip-btn').forEach((b) => { b.style.display = ''; });
+    listEl.hidden = !listMode;
+    if (listMode) {
+      if (!listRows.length) loadList($('#memQ').value.trim());
+      else renderList();
+      stop();
+    } else {
+      start();
+    }
   });
 
-  let searchTimer = null;
-  async function renderList(q) {
-    const wrap = document.createElement('div');
-    wrap.className = 'mem-list';
-    wrap.id = 'memList';
-    const old = $('#memList');
-    if (old) old.remove();
-    main.querySelector('.mem-wrap').appendChild(wrap);
-    wrap.innerHTML = '<div class="empty">查询中…</div>';
-    try {
-      const r = await api(`/memory/search?limit=40${q ? `&q=${encodeURIComponent(q)}` : ''}`);
-      wrap.innerHTML = r.rows.length
-        ? r.rows.map((row) => `
-          <button class="mem-row" data-id="${row.id}">
-            <span class="mem-row-date">${esc(String(row.event_time || row.ingested_at || '').slice(0, 10))}</span>
-            <span class="mem-row-text">${esc(String(row.head || ''))}</span>
-          </button>`).join('')
-        : '<div class="empty">没找到</div>';
-      wrap.querySelectorAll('.mem-row').forEach((b) =>
-        b.addEventListener('click', () => openStar(b.dataset.id)));
-    } catch (err) {
-      wrap.innerHTML = `<div class="empty">查询失败（${esc(err.message)}）</div>`;
-    }
-  }
-
+  let timer = null;
   $('#memQ').addEventListener('input', (e) => {
-    clearTimeout(searchTimer);
+    clearTimeout(timer);
     const q = e.target.value.trim();
-    searchTimer = setTimeout(() => {
-      if (!listMode) {
-        $('#memView').click();
-      }
-      renderList(q);
+    timer = setTimeout(() => {
+      if (!listMode) $('#memView').click();
+      loadList(q);
     }, 320);
   });
 
-  const ro = new ResizeObserver(() => resize());
-  ro.observe(stage);
-  setTimeout(resize, 30);
+  new ResizeObserver(() => { if (!listMode) { resize(); } }).observe(stage);
+  start();
+
+  // 离开这一页就停掉动画（省电）
+  window.__stopStars = stop;
 }
 
-/* ─────────── 工具 ─────────── */
-async function pageTools() {
+/* ─────────── 工具（入口页） ─────────── */
+const TOOL_ITEMS = [
+  { id: 'usage', label: '记账', desc: '余额 · 用量 · 趋势', em: '¥' },
+  { id: 'status', label: '系统状态', desc: '数据库 · 向量 · 闸门 · 任务', em: '◎' },
+  { id: 'health', label: '健康', desc: '还没做', em: '❤', soon: true },
+  { id: 'sleep', label: '睡眠', desc: '手环截图识别 · 趋势', em: '☾', soon: true },
+  { id: 'calendar', label: '日历', desc: '事件 · 提醒', em: '▦', soon: true },
+  { id: 'games', label: '游戏', desc: '还没想好', em: '✧', soon: true },
+];
+
+function pageTools() {
+  $('#main').innerHTML = `
+    <div class="tool-grid">
+      ${TOOL_ITEMS.map((t) => `
+        <button class="tool-tile" data-tool="${t.id}">
+          <span class="tool-em">${t.em}</span>
+          <b>${t.label}</b>
+          <span>${t.desc}</span>
+        </button>`).join('')}
+    </div>
+  `;
+  $('#main').querySelectorAll('.tool-tile').forEach((b) =>
+    b.addEventListener('click', () => pageTool(b.dataset.tool)));
+}
+
+function toolBackRow(label) {
+  return `<div class="subhead">
+    <button class="mini" id="toolBack">← 工具</button>
+    <span>${esc(label)}</span>
+  </div>`;
+}
+
+function bindToolBack() {
+  const b = $('#toolBack');
+  if (b) b.addEventListener('click', () => pageTools());
+}
+
+async function pageTool(id) {
+  if (id === 'usage') return pageToolUsage();
+  if (id === 'status') return pageToolStatus();
+  const t = TOOL_ITEMS.find((x) => x.id === id);
+  $('#main').innerHTML = `${toolBackRow(t ? t.label : '')}
+    <div class="soon"><span class="em">${t ? t.em : '✧'}</span><p>这个模块还没做。</p></div>`;
+  bindToolBack();
+}
+
+async function pageToolUsage() {
   const main = $('#main');
-  main.innerHTML = '<div class="empty">读取中…</div>';
+  main.innerHTML = `${toolBackRow('记账')}<div class="empty">读取中…</div>`;
+  bindToolBack();
 
   let usage;
-  let status;
   try {
-    [usage, status] = await Promise.all([api('/admin/usage'), api('/admin/status')]);
+    usage = await api('/admin/usage');
   } catch (err) {
-    main.innerHTML = `<div class="empty">读不到（${esc(err.message)}）</div>`;
+    main.innerHTML = `${toolBackRow('记账')}<div class="empty">读不到（${esc(err.message)}）</div>`;
+    bindToolBack();
     return;
   }
 
@@ -1034,6 +1187,7 @@ async function pageTools() {
   const fmt = (n) => (n >= 10000 ? `${(n / 1000).toFixed(1)}k` : String(n));
 
   main.innerHTML = `
+    ${toolBackRow('记账')}
     <section class="card ornate">
       <div class="card-title">余额<span class="caps">CNY</span></div>
       <div class="usage-big">${usage.balance.ok && usage.balance.cny !== null ? `¥${usage.balance.cny}` : '读不到'}</div>
@@ -1045,15 +1199,11 @@ async function pageTools() {
     <section class="card ornate">
       <div class="card-title">近七天<span class="caps">tokens</span></div>
       <div class="bars">
-        ${usage.days.length === 0
-          ? '<div class="empty">还没有记录</div>'
+        ${usage.days.length === 0 ? '<div class="empty">还没有记录</div>'
           : usage.days.map((d) => {
               const total = d.prompt + d.completion;
               const h = Math.max(4, Math.round((total / maxDay) * 74));
-              return `<div class="bar-item">
-                <div class="bar" style="height:${h}px" title="${total} tokens"></div>
-                <span>${esc(d.day)}</span>
-              </div>`;
+              return `<div class="bar-item"><div class="bar" style="height:${h}px"></div><span>${esc(d.day)}</span></div>`;
             }).join('')}
       </div>
       <div class="usage-row">
@@ -1065,64 +1215,92 @@ async function pageTools() {
 
     <section class="card ornate">
       <div class="card-title">花在哪了<span class="caps">近七天</span></div>
-      ${usage.byLabel.length === 0
-        ? '<div class="empty">还没有记录</div>'
+      ${usage.byLabel.length === 0 ? '<div class="empty">还没有记录</div>'
         : usage.byLabel.map((l) => `
-          <div class="row">
-            <span class="k" style="font-size:14px">${esc(l.label)}</span>
-            <span class="v">${l.calls} 次 · ${fmt(l.prompt + l.completion)}</span>
-          </div>`).join('')}
+          <div class="row"><span class="k" style="font-size:14px">${esc(l.label)}</span>
+          <span class="v">${l.calls} 次 · ${fmt(l.prompt + l.completion)}</span></div>`).join('')}
     </section>
 
     <section class="card ornate">
-      <div class="card-title">系统状态</div>
-      <div class="row"><span class="k">数据库</span><span class="v">${status.db.ok ? '连通' : '异常'} · pgvector ${esc(status.db.vector || '?')}</span></div>
-      <div class="row"><span class="k">向量</span><span class="v">${esc(status.embedding.provider)} · ${status.embedding.dim} 维</span></div>
-      <div class="row"><span class="k">记忆</span><span class="v">${status.memories} 条</span></div>
-      <div class="row"><span class="k">主动找她</span><span class="v">${status.gates.allowed ? '允许' : '拦住：' + esc(status.gates.blockedBy.join('、'))}</span></div>
-      <div class="row"><span class="k">运行</span><span class="v">${Math.floor(status.uptimeSec / 3600)} 小时 ${Math.floor((status.uptimeSec % 3600) / 60)} 分</span></div>
+      <div class="card-title">最近调用</div>
+      ${usage.recent.length === 0 ? '<div class="empty">还没有记录</div>'
+        : usage.recent.map((r) => `
+          <div class="row"><span class="k" style="font-size:13px">${esc(r.label || '(未标注)')}</span>
+          <span class="v">${esc(r.model)} · ${fmt(r.prompt + r.completion)}${r.estimated ? ' (估)' : ''}</span></div>`).join('')}
+    </section>
+  `;
+  bindToolBack();
+}
+
+async function pageToolStatus() {
+  const main = $('#main');
+  main.innerHTML = `${toolBackRow('系统状态')}<div class="empty">读取中…</div>`;
+  bindToolBack();
+
+  let s;
+  try {
+    s = await api('/admin/status');
+  } catch (err) {
+    main.innerHTML = `${toolBackRow('系统状态')}<div class="empty">读不到（${esc(err.message)}）</div>`;
+    bindToolBack();
+    return;
+  }
+
+  main.innerHTML = `
+    ${toolBackRow('系统状态')}
+    <section class="card ornate">
+      <div class="card-title">底子</div>
+      <div class="row"><span class="k">数据库</span><span class="v">${s.db.ok ? '连通' : '异常'} · pgvector ${esc(s.db.vector || '?')}</span></div>
+      <div class="row"><span class="k">向量</span><span class="v">${esc(s.embedding.provider)} · ${s.embedding.dim} 维</span></div>
+      <div class="row"><span class="k">记忆</span><span class="v">${s.memories} 条</span></div>
+      <div class="row"><span class="k">运行</span><span class="v">${Math.floor(s.uptimeSec / 3600)} 小时 ${Math.floor((s.uptimeSec % 3600) / 60)} 分</span></div>
     </section>
 
     <section class="card ornate">
-      <div class="card-title">常驻任务</div>
-      ${status.jobs.map((j) => `
-        <div class="row">
-          <span class="k" style="font-size:13.5px">${esc(j.job_key)}</span>
-          <span class="v">${esc(j.status)} · ${j.run_count} 次${j.last_error ? ' · ' + esc(j.last_error.slice(0, 18)) : ''}</span>
-        </div>`).join('')}
+      <div class="card-title">他现在能不能主动找她</div>
+      <div class="row">
+        <span class="k">${s.gates.allowed ? '可以' : '被拦住'}</span>
+        <span class="v">${s.gates.allowed ? '' : esc(s.gates.blockedBy.join('；'))}</span>
+      </div>
+      <div class="row"><span class="k">今天已发</span><span class="v">${s.gates.stats.sentToday} 条</span></div>
+      <div class="row"><span class="k">距上次</span><span class="v">${s.gates.stats.hoursSinceLastSent === null ? '—' : s.gates.stats.hoursSinceLastSent.toFixed(1) + ' 小时'}</span></div>
+    </section>
+
+    <section class="card ornate">
+      <div class="card-title">常驻任务<span class="caps">${s.jobs.length}</span></div>
+      ${s.jobs.map((j) => `
+        <div class="row"><span class="k" style="font-size:13.5px">${esc(j.job_key)}</span>
+        <span class="v">${esc(j.status)} · ${j.run_count} 次${j.last_error ? ' · ' + esc(j.last_error.slice(0, 16)) : ''}</span></div>`).join('')}
     </section>
 
     <section class="card ornate">
       <div class="card-title">手动</div>
-      <div class="row">
-        <span class="k">叫醒他一次</span>
-        <button class="mini" id="wakeNow">叫醒</button>
-      </div>
-      <div class="row">
-        <span class="k">跑一次维护</span>
-        <button class="mini" id="maintNow">维护</button>
-      </div>
+      <div class="row"><span class="k">叫醒他一次</span><button class="mini" id="wakeNow">叫醒</button></div>
+      <div class="row"><span class="k">跑一次维护</span><button class="mini" id="maintNow">维护</button></div>
     </section>
   `;
+  bindToolBack();
 
-  const doAction = async (label, fn) => {
-    toast(label + '…', 1400);
+  $('#wakeNow').addEventListener('click', async () => {
+    toast('叫醒中…', 1400);
     try {
-      const r = await fn();
-      toast(label + '完成', 1800);
-      return r;
+      await api('/admin/wake', { method: 'POST', body: JSON.stringify({ force: true }) });
+      toast('叫醒了', 1600);
+      pageToolStatus();
     } catch (err) {
-      toast(label + '失败：' + err.message, 2600);
+      toast('失败：' + err.message, 2600);
     }
-  };
-
-  $('#wakeNow').addEventListener('click', () =>
-    doAction('叫醒', () => api('/admin/wake', { method: 'POST', body: JSON.stringify({ force: true }) }))
-      .then(() => pageTools()));
-  $('#maintNow').addEventListener('click', () =>
-    doAction('维护', () => api('/admin/maintenance', { method: 'POST', body: JSON.stringify({}) })));
+  });
+  $('#maintNow').addEventListener('click', async () => {
+    toast('维护中…', 1400);
+    try {
+      await api('/admin/maintenance', { method: 'POST', body: JSON.stringify({}) });
+      toast('维护完成', 1800);
+    } catch (err) {
+      toast('失败：' + err.message, 2600);
+    }
+  });
 }
-
 
 /* ─────────── 路由 ─────────── */
 const PAGES = {
@@ -1139,6 +1317,8 @@ let currentPage = null;
 
 function go(page) {
   if (!PAGES[page]) page = 'home';
+  // 离开星图就停掉动画（否则一直在后台吃电）
+  if (currentPage === 'memory' && page !== 'memory' && window.__stopStars) window.__stopStars();
   currentPage = page;
   location.hash = `#${page}`;
   renderTabbar(page);
