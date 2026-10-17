@@ -701,6 +701,79 @@ body.memory-mode .main { min-height: 0; overflow: hidden; display: flex; }
   font-size: 11.5px; color: var(--muted);
 }
 
+/* ═══════════════ 朋友圈 ═══════════════ */
+.mom-head {
+  display: flex; align-items: center; gap: 12px; padding: 2px 0 12px;
+}
+.mom-switch {
+  display: flex; padding: 3px; border-radius: 999px;
+  background: var(--bg2); border: 1px solid var(--line);
+}
+.mom-switch button {
+  border: 0; background: transparent; color: var(--muted);
+  font-family: var(--f-title); font-weight: 700; font-size: 12.5px;
+  padding: 6px 16px; border-radius: 999px; cursor: pointer;
+}
+.mom-switch button.on { background: var(--accent); color: var(--card) }
+.mom-head .caps { margin-left: auto; opacity: .6 }
+
+.mom-compose { padding: 14px }
+.mom-compose textarea {
+  width: 100%; resize: none; border: 0; outline: none; background: transparent;
+  font-family: var(--f-body); font-size: var(--fs-body); line-height: 1.7; color: var(--text);
+  min-height: 46px;
+}
+.mom-compose-bar { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap }
+.mom-attach { display: flex; gap: 6px; flex-wrap: wrap }
+
+.mom-item { padding: 16px 16px 12px }
+.mom-top { display: flex; align-items: center; gap: 8px; margin-bottom: 8px }
+.mom-who { font-family: var(--f-title); font-weight: 700; font-size: 14.5px }
+.mom-mood {
+  font-size: 10.5px; color: var(--accent); border: 1px solid currentColor;
+  border-radius: 999px; padding: 0 7px;
+}
+.mom-time {
+  margin-left: auto; font-family: var(--f-body-en); font-size: 11px;
+  color: var(--muted); letter-spacing: .04em;
+}
+.mom-body { font-size: var(--fs-body); line-height: 1.8; white-space: pre-wrap }
+.mom-actions { display: flex; gap: 16px; margin-top: 10px }
+.mom-like, .mom-cmt {
+  border: 0; background: transparent; color: var(--muted); cursor: pointer;
+  font-size: 12.5px; font-family: var(--f-title); font-weight: 700; padding: 0;
+}
+.mom-like.on { color: #C4556E }
+.mom-comments {
+  margin-top: 10px; padding-top: 8px;
+  border-top: 1px dashed color-mix(in srgb, var(--line) 80%, transparent);
+  display: flex; flex-direction: column; gap: 5px;
+}
+.mom-cmt-row { font-size: var(--fs-small); line-height: 1.6 }
+.mom-cmt-row b { color: var(--accent); font-family: var(--f-title); margin-right: 6px }
+
+/* ═══════════════ 醒来房间 ═══════════════ */
+.wake-row {
+  padding: 11px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 65%, transparent);
+}
+.wake-row:last-child { border-bottom: 0 }
+.wake-when {
+  font-family: var(--f-body-en); font-size: 11px; color: var(--muted);
+  letter-spacing: .05em;
+}
+.wake-what {
+  font-family: var(--f-title); font-weight: 700; font-size: 14.5px; margin: 2px 0 4px;
+}
+.wake-did { font-size: var(--fs-small); line-height: 1.7; opacity: .88 }
+.moment-note {
+  font-size: var(--fs-small); line-height: 1.75;
+  padding: 10px 12px; border-radius: 12px;
+  background: color-mix(in srgb, var(--bg2) 80%, transparent);
+  margin-bottom: 8px;
+}
+.moment-note.small { font-size: 12.5px }
+
 /* ═══════════════ 工具 ═══════════════ */
 .tool-grid {
   display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px;

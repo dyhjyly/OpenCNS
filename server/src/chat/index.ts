@@ -3,6 +3,7 @@ import type { Response } from 'express';
 import { log, errFields } from '../logger.js';
 import { chatText, chatTextStream, type ChatMessage, type ContentPart } from '../llm/client.js';
 import { readTextUpload, readUpload } from './uploads.js';
+import { recentPats } from '../social/moments.js';
 import { buildDriveHints } from '../drives/render.js';
 import { processTurnSignals } from '../drives/signals.js';
 import { compressOutOfWindow, compressWholeSession } from '../memory/compress/pipeline.js';
@@ -121,6 +122,18 @@ async function prepareTurn(req: ChatRequest): Promise<PreparedTurn> {
       '她在问过去的事，但你手上没有任何相关的记忆。\n' +
       '直接说你想不起来，或者只能说到你确实确定的那一层；不要推测、不要补全细节。';
     contextBlock = contextBlock ? `${contextBlock}\n\n${notice}` : notice;
+  }
+
+  // 拍一拍：让她拍完他真的"有感"，而不是拍给空气
+  const pats = await recentPats(30).catch(() => []);
+  if (pats.length > 0) {
+    const lines = pats
+      .filter((p) => p.from === 'human')
+      .map((p) => `· 她刚才拍了拍你${p.suffix ? `，${p.suffix}` : ''}`);
+    if (lines.length > 0) {
+      const block = ['【她刚拍了拍你】', ...lines].join('\n');
+      contextBlock = contextBlock ? `${contextBlock}\n\n${block}` : block;
+    }
   }
 
   /*

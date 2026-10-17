@@ -383,6 +383,104 @@ export function startHttpServer(): Server {
     }
   });
 
+  app.get('/moments', requireToken, async (req, res) => {
+    try {
+      const { listMoments } = await import('../social/moments.js');
+      const limit = Math.min(60, Math.max(1, Number(req.query.limit ?? 30)));
+      return res.json({ ok: true, moments: await listMoments(limit) });
+    } catch (err) {
+      log.error('读朋友圈失败', errFields(err));
+      return res.status(500).json(errFields(err));
+    }
+  });
+
+  app.post('/moments', requireToken, async (req, res) => {
+    try {
+      const { createMoment } = await import('../social/moments.js');
+      const body = (req.body ?? {}) as {
+        content?: string;
+        author?: 'self' | 'human';
+        images?: { id: string; name: string; mime: string }[];
+        mood?: string;
+      };
+      const moment = await createMoment({
+        author: body.author === 'self' ? 'self' : 'human',
+        content: String(body.content ?? ''),
+        images: body.images,
+        mood: body.mood ?? null,
+      });
+      return res.json({ ok: true, moment });
+    } catch (err) {
+      return res.status(400).json({ error: 'create_failed', message: String((err as Error)?.message ?? err) });
+    }
+  });
+
+  app.post('/moments/:id/like', requireToken, async (req, res) => {
+    try {
+      const { toggleLike } = await import('../social/moments.js');
+      const who = (req.body as { author?: string })?.author === 'self' ? 'self' : 'human';
+      return res.json({ ok: true, ...(await toggleLike(String(req.params.id), who)) });
+    } catch (err) {
+      return res.status(500).json(errFields(err));
+    }
+  });
+
+  app.post('/moments/:id/comments', requireToken, async (req, res) => {
+    try {
+      const { addComment } = await import('../social/moments.js');
+      const body = (req.body ?? {}) as { content?: string; author?: 'self' | 'human' };
+      await addComment(String(req.params.id), body.author === 'self' ? 'self' : 'human', String(body.content ?? ''));
+      return res.json({ ok: true });
+    } catch (err) {
+      return res.status(400).json({ error: 'comment_failed', message: String((err as Error)?.message ?? err) });
+    }
+  });
+
+  app.delete('/moments/:id', requireToken, async (req, res) => {
+    try {
+      const { deleteMoment } = await import('../social/moments.js');
+      await deleteMoment(String(req.params.id));
+      return res.json({ ok: true });
+    } catch (err) {
+      return res.status(500).json(errFields(err));
+    }
+  });
+
+  app.get('/wake/room', requireToken, async (_req, res) => {
+    try {
+      const { getWakeRoom } = await import('../wake/room-view.js');
+      return res.json({ ok: true, ...(await getWakeRoom(20)) });
+    } catch (err) {
+      log.error('读醒来房间失败', errFields(err));
+      return res.status(500).json(errFields(err));
+    }
+  });
+
+  app.post('/pat', requireToken, async (req, res) => {
+    try {
+      const { pat } = await import('../social/moments.js');
+      const body = (req.body ?? {}) as { from?: 'self' | 'human'; suffix?: string; sessionId?: string };
+      await pat({
+        from: body.from === 'self' ? 'self' : 'human',
+        to: body.from === 'self' ? 'human' : 'self',
+        suffix: body.suffix ?? null,
+        sessionId: body.sessionId ?? null,
+      });
+      return res.json({ ok: true });
+    } catch (err) {
+      return res.status(500).json(errFields(err));
+    }
+  });
+
+  app.get('/pat', requireToken, async (_req, res) => {
+    try {
+      const { recentPats } = await import('../social/moments.js');
+      return res.json({ ok: true, pats: await recentPats(120) });
+    } catch (err) {
+      return res.status(500).json(errFields(err));
+    }
+  });
+
   app.get('/memory/starmap', requireToken, async (_req, res) => {
     try {
       const { getStarMap } = await import('../memory/starmap.js');

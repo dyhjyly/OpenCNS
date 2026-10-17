@@ -12,6 +12,9 @@ import { log, errFields } from '../logger.js';
 
 export interface WeatherInfo {
   ok: boolean;
+  /** 界面上的地名标签：有定位就是"当前位置"，否则是设置里的地区 */
+  label: string | null;
+  /** 设置里写的那个地区（用来对比"你在外面还是在武汉"） */
   city: string | null;
   region: string | null;
   text: string;
@@ -127,12 +130,16 @@ export async function getWeather(opts: { lat?: number; lon?: number; city?: stri
   let lon = opts.lon;
   let cityName: string | null = opts.city ?? null;
   let region: string | null = null;
+  const hasCoords = opts.lat !== undefined && opts.lon !== undefined;
 
   // 标签用的城市名：优先传进来的，其次设置里的
   const settingCity = await one<{ value: unknown }>(`select value from settings where key = 'weather.city'`)
     .then((r) => (typeof r?.value === 'string' ? r.value.trim() : ''))
     .catch(() => '');
   const labelCity = cityName || settingCity || null;
+
+  /** 有定位就显示"当前位置"；没有就用设置里的地区 */
+  const labelOf = (name: string | null) => (hasCoords ? '当前位置' : (name ?? '你那边'));
 
   if (lat === undefined || lon === undefined) {
     const targetCity = cityName || settingCity || '驻马店';
@@ -145,14 +152,16 @@ export async function getWeather(opts: { lat?: number; lon?: number; city?: stri
       cityName = geo.name;
     }
   } else {
-    // 有坐标时不做反地理编码（open-meteo 不提供），标签就用设置里的城市名；
-    // 没设过就是 null，前端显示"你那边"——但**绝不能**因为拿不到城市名就整块空着。
+    // 有坐标时不做反地理编码（open-meteo 不提供）。
+    // 标签按她的要求显示"当前位置"——数据来自她的实际位置，
+    // 而设置里的地区只是兜底与对照。
     cityName = labelCity;
   }
 
   if (lat === undefined || lon === undefined) {
     return {
       ok: false,
+      label: labelOf(cityName),
       city: cityName,
       region,
       text: '定位不到',
@@ -171,7 +180,7 @@ export async function getWeather(opts: { lat?: number; lon?: number; city?: stri
   const key = `${lat.toFixed(2)},${lon.toFixed(2)}`;
   const hit = cache.get(key);
   if (hit && !opts.fresh && Date.now() - hit.at < TTL) {
-    return { ...hit.data, city: cityName ?? hit.data.city };
+    return { ...hit.data, label: labelOf(cityName), city: cityName ?? hit.data.city };
   }
 
   const url =
@@ -199,6 +208,7 @@ export async function getWeather(opts: { lat?: number; lon?: number; city?: stri
     const temp = j.current?.temperature_2m ?? null;
     const info: WeatherInfo = {
       ok: true,
+      label: labelOf(cityName),
       city: cityName,
       region,
       text: CODES[code]?.text ?? '—',
@@ -217,9 +227,10 @@ export async function getWeather(opts: { lat?: number; lon?: number; city?: stri
     return info;
   } catch (err) {
     log.warn('取天气失败，用缓存或占位', errFields(err));
-    if (hit) return hit.data;
+    if (hit) return { ...hit.data, label: labelOf(cityName) };
     return {
       ok: false,
+      label: labelOf(cityName),
       city: cityName,
       region,
       text: '取不到',

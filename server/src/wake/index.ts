@@ -96,5 +96,15 @@ export async function runWakeCycle(opts: { force?: boolean } = {}): Promise<Wake
   });
   await saveRoomPack(wakeLogId, pack, pack.rendered);
 
+  // 把这次醒来和它写下的经历绑起来，醒来房间才解释得清"这一条是谁留下的"
+  if (outcome.experienceId) {
+    const { query } = await import('../db/pool.js');
+    await query(
+      `update memory_items set provenance = provenance || jsonb_build_object('wake_id', $2::int)
+        where id = $1`,
+      [outcome.experienceId, wakeLogId],
+    ).catch(() => undefined);
+  }
+
   return { skipped: false, metronome, signals, outcome, wakeLogId };
 }

@@ -117,11 +117,12 @@ function renderTabbar(active) {
 function setHeader(page) {
   const isHome = page === 'home';
   $('#back').hidden = isHome;
-  $('#headSlot').hidden = !isHome;
+  // 聊天页把那颗小圆当头像用（双击 = 拍一拍），其它非主页就藏起来
+  $('#headSlot').hidden = !(isHome || page === 'chat');
   if (!isHome) {
     const t = TABS.find((x) => x.id === page);
-    $('#greet').textContent = t ? t.label : '';
-    $('#stamp').textContent = '';
+    $('#greet').textContent = page === 'chat' ? '聊天' : t ? t.label : '';
+    $('#stamp').textContent = page === 'chat' ? '双击头像拍拍他' : '';
   }
 }
 
@@ -203,7 +204,7 @@ async function pageHome(fresh = false) {
         <div class="weather-icon">${weatherIcon(iconForCode(w.code))}</div>
         <div class="weather-main">
           <div class="weather-place">
-            ${esc(w.city || '你那边')}
+            ${esc(w.label || w.city || '你那边')}
             <span style="opacity:.55;font-weight:400">· ${esc(w.text || '—')}</span>
             ${w.temperature !== null && w.temperature !== undefined ? `<span class="temp">${Math.round(w.temperature)}°</span>` : ''}
           </div>
@@ -589,6 +590,34 @@ async function pageChat() {
     }
   });
 
+  // 双击头部那颗小圆 = 拍一拍
+  function doPat() {
+    const suffix = localStorage.getItem('pat.suffix') || '';
+    void api('/pat', {
+      method: 'POST',
+      body: JSON.stringify({ from: 'human', suffix, sessionId: store.session }),
+    })
+      .then(() => addMeta(`你拍了拍江瑜${suffix ? `，${suffix}` : ''}`))
+      .catch((err) => toast('拍拍失败：' + err.message, 2400));
+    if (navigator.vibrate) navigator.vibrate(12);
+  }
+
+  const avatar = $('#headSlot');
+  if (avatar) {
+    avatar.style.cursor = 'pointer';
+    let lastTapAt = 0;
+    avatar.addEventListener('click', () => {
+      if (currentPage !== 'chat') return;
+      const now = Date.now();
+      if (now - lastTapAt < 330) {
+        lastTapAt = 0;
+        doPat();
+      } else {
+        lastTapAt = now;
+      }
+    });
+  }
+
   // 进页面不自动聚焦（手机上会立刻弹键盘）
   if (!isTouch) input.focus();
 }
@@ -634,6 +663,14 @@ async function pageSettings() {
           <option value="off" ${!store.thinking ? 'selected' : ''}>完全隐藏</option>
         </select>
       </div>
+      <div class="row">
+        <span class="k">拍一拍后缀</span>
+        <input type="text" id="patSuffix" style="width:132px;text-align:right"
+               value="${esc(localStorage.getItem('pat.suffix') || '')}" placeholder="说：在的" />
+      </div>
+      <p style="font-size:var(--fs-small);color:var(--muted);margin:8px 0 0">
+        聊天页双击左上角那颗小圆，就是拍一拍。
+      </p>
     </section>
 
     <section class="card ornate">
@@ -706,6 +743,10 @@ async function pageSettings() {
     store.thinking = e.target.value === 'on';
     toast(store.thinking ? '思考链：显示（折叠）' : '思考链：已隐藏');
   });
+  $('#patSuffix').addEventListener('change', (e) => {
+    localStorage.setItem('pat.suffix', e.target.value.trim());
+    toast('拍一拍后缀已保存', 1400);
+  });
   $('#mChat').addEventListener('change', (e) => save({ 'llm.chat_model': e.target.value }));
   $('#eChat').addEventListener('change', (e) => save({ 'llm.chat_effort': e.target.value }));
   $('#city').addEventListener('change', (e) => {
@@ -721,6 +762,237 @@ async function pageSettings() {
     store.session = null;
     toast('已开新会话');
     pageSettings();
+  });
+}
+
+/* ─────────── 朋友圈 ─────────── */
+let momentWho = 'human'; // 当前用谁的身份发
+
+async function pageMoments() {
+  const main = $('#main');
+  main.innerHTML = '<div class="empty">加载中…</div>';
+
+  let list;
+  try {
+    const r = await api('/moments?limit=40');
+    list = r.moments;
+  } catch (err) {
+    main.innerHTML = `<div class="empty">读不到（${esc(err.message)}）</div>`;
+    return;
+  }
+
+  const whoName = (w) => (w === 'self' ? '江瑜' : '林遇');
+  const fmtTime = (iso) => {
+    const d = new Date(iso);
+    const now = new Date();
+    const hm = hhmm(d);
+    if (d.toDateString() === now.toDateString()) return hm;
+    return `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
+  };
+
+  main.innerHTML = `
+    <div class="mom-head">
+      <div class="mom-switch">
+        <button data-who="human" class="${momentWho === 'human' ? 'on' : ''}">我</button>
+        <button data-who="self" class="${momentWho === 'self' ? 'on' : ''}">江瑜</button>
+      </div>
+      <span class="caps">只给我们看</span>
+    </div>
+
+    <div class="card ornate mom-compose">
+      <textarea id="momText" rows="2" placeholder="说点什么…"></textarea>
+      <div class="mom-compose-bar">
+        <button class="mini" id="momImg">图片</button>
+        <span id="momAttach" class="mom-attach"></span>
+        <button class="mini" id="momPost" style="margin-left:auto">发布</button>
+      </div>
+      <input type="file" id="momFile" accept="image/*" multiple hidden />
+    </div>
+
+    <div id="momFeed">
+      ${list.length === 0
+        ? '<div class="empty">还没有动态。写第一条吧。</div>'
+        : list.map((m) => `
+          <article class="card ornate mom-item">
+            <div class="mom-top">
+              <span class="mom-who">${whoName(m.author)}</span>
+              ${m.mood ? `<span class="mom-mood">${esc(m.mood)}</span>` : ''}
+              <span class="mom-time">${fmtTime(m.createdAt)}</span>
+            </div>
+            <div class="mom-body">${esc(m.content)}</div>
+            ${m.images.length ? `<div class="att-row">${m.images.map((i) => `<img src="${API}/upload/${i.id}" alt="${esc(i.name || '')}" loading="lazy" />`).join('')}</div>` : ''}
+            <div class="mom-actions">
+              <button class="mom-like ${m.likes.includes(momentWho) ? 'on' : ''}" data-id="${m.id}">
+                ${m.likes.includes(momentWho) ? '♥' : '♡'} ${m.likes.length || ''}
+              </button>
+              <button class="mom-cmt" data-id="${m.id}">评论 ${m.comments.length || ''}</button>
+            </div>
+            ${m.comments.length ? `<div class="mom-comments">
+              ${m.comments.map((c) => `<div class="mom-cmt-row"><b>${whoName(c.author)}</b>${esc(c.content)}</div>`).join('')}
+            </div>` : ''}
+          </article>`).join('')}
+    </div>
+  `;
+
+  main.querySelectorAll('.mom-switch button').forEach((b) =>
+    b.addEventListener('click', () => {
+      momentWho = b.dataset.who;
+      pageMoments();
+    }));
+
+  let momImages = [];
+  const attachBox = $('#momAttach');
+  const fileInput = $('#momFile');
+
+  const renderAttach = () => {
+    attachBox.innerHTML = momImages.map((i, n) =>
+      `<span class="chip">🖼 ${esc(i.name || '图片')}<button data-n="${n}">×</button></span>`).join('');
+    attachBox.querySelectorAll('button').forEach((b) =>
+      b.addEventListener('click', () => { momImages.splice(Number(b.dataset.n), 1); renderAttach(); }));
+  };
+
+  $('#momImg').addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', async () => {
+    const files = Array.from(fileInput.files || []);
+    fileInput.value = '';
+    if (!files.length) return;
+    toast('上传中…', 1200);
+    for (const raw of files) {
+      try {
+        const f = await shrinkImage(raw);
+        const up = await api('/upload', {
+          method: 'POST',
+          body: JSON.stringify({ name: f.name, mime: f.type || 'application/octet-stream', dataBase64: await fileToBase64(f) }),
+        });
+        momImages.push({ id: up.id, name: up.name, mime: up.mime });
+      } catch (err) {
+        toast('上传失败：' + err.message, 2600);
+      }
+    }
+    renderAttach();
+  });
+
+  $('#momPost').addEventListener('click', async () => {
+    const text = $('#momText').value.trim();
+    if (!text && momImages.length === 0) return toast('写点什么');
+    try {
+      await api('/moments', {
+        method: 'POST',
+        body: JSON.stringify({ content: text, author: momentWho, images: momImages }),
+      });
+      toast('发布好了', 1200);
+      pageMoments();
+    } catch (err) {
+      toast('发布失败：' + err.message, 2600);
+    }
+  });
+
+  main.querySelectorAll('.mom-like').forEach((b) =>
+    b.addEventListener('click', async () => {
+      try {
+        await api(`/moments/${b.dataset.id}/like`, {
+          method: 'POST',
+          body: JSON.stringify({ author: momentWho }),
+        });
+        pageMoments();
+      } catch (err) { toast('失败：' + err.message); }
+    }));
+
+  main.querySelectorAll('.mom-cmt').forEach((b) =>
+    b.addEventListener('click', async () => {
+      const text = prompt('说点什么');
+      if (!text || !text.trim()) return;
+      try {
+        await api(`/moments/${b.dataset.id}/comments`, {
+          method: 'POST',
+          body: JSON.stringify({ content: text, author: momentWho }),
+        });
+        pageMoments();
+      } catch (err) { toast('评论失败：' + err.message); }
+    }));
+}
+
+/* ─────────── 醒来房间 ─────────── */
+const DECISION_TEXT = {
+  reach_out: '他主动找了你',
+  own_work: '他做了点自己的事',
+  rest: '他回去睡了一会儿',
+  stay_quiet: '他只是安静待着',
+  read_notes: '他翻了翻旧便签',
+  hide_surprise: '他藏了个惊喜',
+};
+
+async function pageWake() {
+  const main = $('#main');
+  main.innerHTML = '<div class="empty">加载中…</div>';
+
+  let r;
+  try {
+    r = await api('/wake/room');
+  } catch (err) {
+    main.innerHTML = `<div class="empty">读不到（${esc(err.message)}）</div>`;
+    return;
+  }
+
+  const fmt = (iso) => {
+    const d = new Date(iso);
+    return `${d.getMonth() + 1}/${d.getDate()} ${hhmm(d)}`;
+  };
+
+  main.innerHTML = `
+    <section class="card ornate">
+      <div class="card-title">醒来过<span class="caps">${r.counts.wakes} 次</span></div>
+      <div class="usage-row">
+        <span>真的醒来 ${r.counts.decided} 次</span>
+        <span>零成本跳过 ${r.counts.skipped} 次</span>
+      </div>
+    </section>
+
+    ${r.surprises.length ? `
+      <section class="card ornate">
+        <div class="card-title">惊喜<span class="caps">已解开</span></div>
+        ${r.surprises.map((s) => `<div class="moment-note">${esc(s.content)}</div>`).join('')}
+      </section>` : ''}
+
+    ${r.lockedSurprises > 0 ? `
+      <section class="card ornate">
+        <div class="card-title">还有惊喜没到时间<span class="caps">${r.lockedSurprises}</span></div>
+        <p style="font-size:var(--fs-small);color:var(--muted);margin:0">他藏起来的，到时间自己会解开。</p>
+      </section>` : ''}
+
+    ${r.notes.length ? `
+      <section class="card ornate">
+        <div class="card-title">他的便签<span class="caps">${r.notes.length}</span></div>
+        ${r.notes.map((n) => `<div class="moment-note small">${esc(n.content)}</div>`).join('')}
+      </section>` : ''}
+
+    <section class="card ornate">
+      <div class="card-title">最近几次醒来</div>
+      ${r.entries.length === 0
+        ? '<div class="empty">还没醒过</div>'
+        : r.entries.map((e) => `
+          <div class="wake-row">
+            <div class="wake-when">${fmt(e.at)}</div>
+            <div class="wake-what">${esc(e.decision ? DECISION_TEXT[e.decision] || e.decision : e.skipped || '什么也没做')}</div>
+            ${e.did ? `<div class="wake-did">${esc(e.did)}</div>` : ''}
+          </div>`).join('')}
+    </section>
+
+    <section class="card ornate">
+      <div class="card-title">手动</div>
+      <div class="row"><span class="k">现在叫醒他一次</span><button class="mini" id="wakeNow">叫醒</button></div>
+    </section>
+  `;
+
+  $('#wakeNow').addEventListener('click', async () => {
+    toast('叫醒中…', 1600);
+    try {
+      await api('/admin/wake', { method: 'POST', body: JSON.stringify({ force: true }) });
+      toast('叫醒了', 1400);
+      setTimeout(pageWake, 900);
+    } catch (err) {
+      toast('失败：' + err.message, 2600);
+    }
   });
 }
 
@@ -1350,8 +1622,8 @@ const PAGES = {
   home: pageHome,
   chat: pageChat,
   memory: pageMemory,
-  moments: () => pageSoon('朋友圈', '两个人一起看的时间流。还没做。', 'moments'),
-  wake: () => pageSoon('醒来房间', '他独处时做了什么。还没做。', 'reverie'),
+  moments: pageMoments,
+  wake: pageWake,
   tools: pageTools,
   settings: pageSettings,
 };

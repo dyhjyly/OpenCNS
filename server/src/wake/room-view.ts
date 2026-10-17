@@ -1,0 +1,117 @@
+import { many, one } from '../db/pool.js';
+
+/**
+ * 醒来房间 —— 他独处时留下的东西。
+ *
+ * 内容是后端生成的（节拍器 → 房间 → 决定 → 写经历），前端只负责呈现。
+ * 惊喜对她隐藏，到 reveal_at 才解开。
+ */
+
+export interface WakeRoomEntry {
+  id: number;
+  at: string;
+  decision: string | null;
+  skipped: string | null;
+  modelCalls: number;
+  /** 这一次醒来留下的经历（如果有） */
+  did: string | null;
+}
+
+export interface WakeRoomView {
+  entries: WakeRoomEntry[];
+  notes: { id: string; kind: string; content: string; expiresAt: string | null }[];
+  surprises: { id: string; content: string; revealAt: string; revealed: boolean }[];
+  lockedSurprises: number;
+  counts: { wakes: number; decided: number; skipped: number };
+}
+
+export async function getWakeRoom(limit = 20): Promise<WakeRoomView> {
+  const wakes = await many<{
+    id: number;
+    created_at: string;
+    decision: string | null;
+    skipped_reason: string | null;
+    model_calls: number;
+  }>(
+    `select id, created_at, decision, skipped_reason, model_calls
+       from wake_log order by created_at desc limit $1`,
+    [limit],
+  );
+
+  // 每次醒来写下的经历：按唤醒时间就近匹配（同一个时间窗内的 experience）
+  const experiences = await many<{ content: string; ingested_at: string; wake_id: number | null }>(
+    `select content, ingested_at, (provenance->>'wake_id')::int as wake_id
+       from memory_items
+      where kind = 'experience' and provenance->>'source' = 'wake'
+      order by ingested_at desc limit 40`,
+  );
+  const expByWake = new Map<number, string>();
+  for (const e of experiences) {
+    if (e.wake_id !== null) expByWake.set(Number(e.wake_id), e.content);
+  }
+
+  const entries: WakeRoomEntry[] = wakes.map((w) => {
+    let did = expByWake.get(Number(w.id)) ?? null;
+    if (!did) {
+      // 没有 wake_id 的旧记录：按时间就近找一条
+      const t = new Date(w.created_at).getTime();
+      const near = experiences.find(
+        (e) => Math.abs(new Date(e.ingested_at).getTime() - t) < 3 * 60_000,
+      );
+      did = near?.content ?? null;
+    }
+    return {
+      id: Number(w.id),
+      at: w.created_at,
+      decision: w.decision,
+      skipped: w.decision ? null : w.skipped_reason,
+      modelCalls: w.model_calls,
+      did,
+    };
+  });
+
+  const notes = await many<{ id: string; kind: string; content: string; expires_at: string | null }>(
+    `select id, kind, content, expires_at
+       from notes where status = 'open'
+      order by created_at desc limit 12`,
+  );
+
+  const surprises = await many<{
+    id: string;
+    content: string;
+    reveal_at: string;
+    revealed_at: string | null;
+  }>(
+    `select id, content, reveal_at, revealed_at
+       from surprises
+      where cancelled_at is null
+      order by reveal_at asc`,
+  );
+
+  const now = Date.now();
+  const visible: WakeRoomView['surprises'] = [];
+  let locked = 0;
+  for (const s of surprises) {
+    const due = new Date(s.reveal_at).getTime() <= now;
+    if (!due) {
+      locked++;
+      continue;
+    }
+    visible.push({ id: s.id, content: s.content, revealAt: s.reveal_at, revealed: Boolean(s.revealed_at) });
+  }
+
+  const counts = await one<{ wakes: number; decided: number; skipped: number }>(
+    `select count(*)::int as wakes,
+            count(*) filter (where decision is not null)::int as decided,
+            count(*) filter (where decision is null)::int as skipped
+       from wake_log`,
+  );
+
+  return {
+    entries,
+    notes: notes.map((n) => ({ id: n.id, kind: n.kind, content: n.content, expiresAt: n.expires_at })),
+    surprises: visible,
+    lockedSurprises: locked,
+    counts: counts ?? { wakes: 0, decided: 0, skipped: 0 },
+  };
+}
