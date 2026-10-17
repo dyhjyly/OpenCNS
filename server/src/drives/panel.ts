@@ -110,10 +110,15 @@ export async function getMindPanel(): Promise<MindPanel> {
     : null;
 
   // 情绪底色：来自她和他最近留下的记忆里的情感值（真实数据，不是编的）
+  // 注意列名是 emotion_valence / emotion_arousal
   const emo = await one<{ valence: number | null; arousal: number | null; n: number }>(
-    `select avg(valence)::float as valence, avg(arousal)::float as arousal, count(*)::int as n
+    `select avg(emotion_valence)::float as valence,
+            avg(emotion_arousal)::float as arousal,
+            count(*)::int as n
        from memory_items
-      where state = 'active' and ingested_at > now() - interval '7 days' and valence is not null`,
+      where state = 'active'
+        and ingested_at > now() - interval '7 days'
+        and emotion_valence is not null`,
   ).catch(() => null);
 
   const to100 = (v: number | null | undefined, lo: number, hi: number) =>
@@ -145,8 +150,11 @@ export async function getMindPanel(): Promise<MindPanel> {
     log.warn('读真心话失败', errFields(err));
   }
 
-  // 愿望清单：现在最想做的两件，来自最强的两个欲望的出口
+  // 愿望清单：现在最想做的两件，来自最强的两个欲望的出口。
+  // 闸门层（累 / 烦）不算愿望 —— 它们的"出口"是"压低主动行为"，写进清单会很好笑。
+  const WISH_EXCLUDE = new Set(['fatigue', 'irritation']);
   const wishes = drives
+    .filter((d) => !WISH_EXCLUDE.has(d.drive_key))
     .filter((d) => d.value - d.baseline > 0.03)
     .sort((a, b) => b.value - b.baseline - (a.value - a.baseline))
     .slice(0, 2)
@@ -155,7 +163,7 @@ export async function getMindPanel(): Promise<MindPanel> {
       text: DRIVE_BY_KEY.get(d.drive_key)?.outlet ?? '',
       from: LABELS[d.drive_key] ?? d.drive_key,
     }))
-    .filter((w) => w.text);
+    .filter((w) => w.text && !w.text.startsWith('（'));
 
   return {
     at: new Date().toISOString(),
