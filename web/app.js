@@ -655,6 +655,18 @@ async function pageSettings() {
     </section>
 
     <section class="card ornate">
+      <div class="card-title">装到桌面</div>
+      <div class="row">
+        <span class="k">像 App 一样打开</span>
+        <button class="mini" id="installBtn">装到桌面</button>
+      </div>
+      <p style="font-size:var(--fs-small);color:var(--muted);margin:8px 0 0">
+        装好之后是一个独立图标，打开没有地址栏。Chrome 里如果按钮没反应，
+        就用右上角 ⋮ → 添加到主屏幕。
+      </p>
+    </section>
+
+    <section class="card ornate">
       <div class="card-title">聊天</div>
       <div class="row">
         <span class="k">思考链</span>
@@ -747,6 +759,8 @@ async function pageSettings() {
     localStorage.setItem('pat.suffix', e.target.value.trim());
     toast('拍一拍后缀已保存', 1400);
   });
+  const installBtn = $('#installBtn');
+  if (installBtn) installBtn.addEventListener('click', () => promptInstall());
   $('#mChat').addEventListener('change', (e) => save({ 'llm.chat_model': e.target.value }));
   $('#eChat').addEventListener('change', (e) => save({ 'llm.chat_effort': e.target.value }));
   $('#city').addEventListener('change', (e) => {
@@ -2242,6 +2256,56 @@ async function enterApp() {
   }
 }
 
+/* ─────────── 装到桌面 ─────────── */
+/**
+ * Chrome 认不认这个站"可以装"，靠三件事：
+ *   1. manifest 里有 PNG 图标（≥192）
+ *   2. display: standalone
+ *   3. 有带 fetch 的 service worker
+ * 前两条本来就有，缺的是"图标只有 SVG"和"没有 SW" —— 所以 Chrome 一直说不能安装。
+ */
+let installEvent = null;
+
+function installPwa() {
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('./sw.js').catch(() => {});
+    });
+  }
+
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    installEvent = e;
+    window.__canInstall = true;
+  });
+
+  window.addEventListener('appinstalled', () => {
+    installEvent = null;
+    window.__canInstall = false;
+    toast('装好了，桌面找「家」', 2400);
+  });
+}
+
+/** 设置页那个按钮调它：能弹系统安装框就弹，不能就给手动步骤 */
+async function promptInstall() {
+  if (installEvent) {
+    installEvent.prompt();
+    const res = await installEvent.userChoice.catch(() => ({ outcome: 'dismissed' }));
+    installEvent = null;
+    window.__canInstall = false;
+    if (res.outcome === 'accepted') toast('正在装…', 1600);
+    return;
+  }
+  const ua = navigator.userAgent;
+  if (/iPhone|iPad|iPod/.test(ua)) {
+    toast('Safari 里点底部分享 → 添加到主屏幕', 4200);
+  } else if (/Android/i.test(ua)) {
+    toast('Chrome 右上角 ⋮ → 添加到主屏幕 / 安装应用', 4200);
+  } else {
+    toast('地址栏右边的安装图标，或菜单里"安装"', 4200);
+  }
+}
+
 /* ─────────── 启动 ─────────── */
 (function boot() {
   applyTheme(store.theme);
@@ -2266,4 +2330,7 @@ async function enterApp() {
     const page = location.hash.replace('#', '') || 'home';
     if (page !== currentPage) go(page);
   });
+
+  installPwa();
+
 })();
