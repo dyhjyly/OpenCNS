@@ -50,7 +50,9 @@ export interface RecallResult {
   judgeReason?: string;
 }
 
-const MAX_CANDIDATES = 24;
+// 裁决要读候选，候选越多它越慢（实测 24 条时裁决单独就要 4~6 秒）。
+// 候选本来就按分数排好序，取前 12 条足够判断，也让它更专注。
+const MAX_CANDIDATES = 12;
 const MAX_RECALLED = 5;
 
 /** 明确想回忆的语气 —— 情绪路与"多给几条"都靠它放行 */
@@ -315,6 +317,27 @@ export async function recall(userMessage: string, opts: { limit?: number } = {})
 
   if (top.length === 0) {
     return { ...empty, byRoute, droppedByCooldown, emotionRouteAllowed: explicit };
+  }
+
+  // 只有一条候选时不必花几秒去裁决——没得选。
+  // 但要确认它足够像，不能因为只有一条就把无关的塞进去。
+  if (top.length === 1) {
+    const only = top[0]!;
+    const strong = (only.similarity ?? 0) >= 0.55 || only.importance >= 0.75;
+    if (!strong) {
+      log.info('只有一条候选且不够强，不递', { score: only.score, similarity: only.similarity });
+      return { ...empty, byRoute, droppedByCooldown, emotionRouteAllowed: explicit, judgeReason: '唯一候选不够强' };
+    }
+    await query(`select reinforce_memory($1, true, 1.5)`, [only.id]).catch(() => undefined);
+    return {
+      recalled: [only],
+      candidates: 1,
+      byRoute,
+      droppedByCooldown,
+      emotionRouteAllowed: explicit,
+      judgeUsed: false,
+      judgeReason: '唯一候选且足够强，跳过裁决',
+    };
   }
 
   // 裁决：由认知模型判断"哪几条真的帮得上"
