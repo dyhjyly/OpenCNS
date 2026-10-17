@@ -114,6 +114,57 @@ export async function addComment(momentId: string, who: Who, content: string): P
     who,
     text,
   ]);
+
+  /*
+   * 她评论完，要"回到他那里"。
+   * 除了下一轮对话的上下文会带上（见 chat/index.ts），这里再留一张便签 ——
+   * 这样他下次醒来在房间里就能看到，不至于错过。
+   */
+  if (who === 'human') {
+    const moment = await one<{ content: string }>(`select content from moments where id = $1`, [momentId]);
+    const head = (moment?.content ?? '').replace(/\s+/g, ' ').slice(0, 40);
+    await query(
+      `insert into notes (kind, content, origin, expires_at)
+       values ('reminder', $1, 'auto', now() + interval '3 days')`,
+      [`她评论了你的动态「${head}」：${text}`],
+    ).catch((err) => log.warn('给评论留便签失败', errFields(err)));
+  }
+}
+
+/** 最近她对他的动态的评论（下一轮对话要带上，让他知道） */
+export async function recentHumanComments(hours = 24): Promise<{ head: string; comment: string; at: string }[]> {
+  try {
+    return await many<{ head: string; comment: string; at: string }>(
+      `select left(m.content, 40) as head, c.content as comment, c.created_at as at
+         from moment_comments c
+         join moments m on m.id = c.moment_id
+        where c.author = 'human'
+          and m.deleted_at is null
+          and c.created_at > now() - ($1 || ' hours')::interval
+        order by c.created_at desc
+        limit 5`,
+      [String(hours)],
+    );
+  } catch (err) {
+    log.warn('读她的评论失败', errFields(err));
+    return [];
+  }
+}
+
+/** 他醒来时做了一件事 —— 顺手发一条动态（只有他能发） */
+export async function postFromWake(input: {
+  content: string;
+  mood?: string | null;
+  wakeId?: number | null;
+}): Promise<string | null> {
+  const text = input.content.trim();
+  if (!text) return null;
+  const row = await one<{ id: string }>(
+    `insert into moments (author, content, mood) values ('self', $1, $2) returning id`,
+    [text, input.mood ?? null],
+  );
+  log.info('他发了动态', { chars: text.length, wakeId: input.wakeId ?? null });
+  return row?.id ?? null;
 }
 
 export async function deleteMoment(momentId: string): Promise<void> {

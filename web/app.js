@@ -766,8 +766,10 @@ async function pageSettings() {
 }
 
 /* ─────────── 朋友圈 ─────────── */
-let momentWho = 'human'; // 当前用谁的身份发
-
+/**
+ * 朋友圈只有他能发。
+ * 她只能看、点赞、评论 —— 评论会回到他那里（对话上下文 + 一张便签）。
+ */
 async function pageMoments() {
   const main = $('#main');
   main.innerHTML = '<div class="empty">加载中…</div>';
@@ -775,124 +777,62 @@ async function pageMoments() {
   let list;
   try {
     const r = await api('/moments?limit=40');
-    list = r.moments;
+    list = r.moments.filter((m) => m.author === 'self');
   } catch (err) {
     main.innerHTML = `<div class="empty">读不到（${esc(err.message)}）</div>`;
     return;
   }
 
-  const whoName = (w) => (w === 'self' ? '江瑜' : '林遇');
   const fmtTime = (iso) => {
     const d = new Date(iso);
     const now = new Date();
     const hm = hhmm(d);
     if (d.toDateString() === now.toDateString()) return hm;
+    const days = Math.floor((now - d) / 86400000);
+    if (days === 1) return `昨天 ${hm}`;
+    if (days < 7) return `${days} 天前 ${hm}`;
     return `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
   };
 
   main.innerHTML = `
     <div class="mom-head">
-      <div class="mom-switch">
-        <button data-who="human" class="${momentWho === 'human' ? 'on' : ''}">我</button>
-        <button data-who="self" class="${momentWho === 'self' ? 'on' : ''}">江瑜</button>
-      </div>
-      <span class="caps">只给我们看</span>
-    </div>
-
-    <div class="card ornate mom-compose">
-      <textarea id="momText" rows="2" placeholder="说点什么…"></textarea>
-      <div class="mom-compose-bar">
-        <button class="mini" id="momImg">图片</button>
-        <span id="momAttach" class="mom-attach"></span>
-        <button class="mini" id="momPost" style="margin-left:auto">发布</button>
-      </div>
-      <input type="file" id="momFile" accept="image/*" multiple hidden />
+      <span class="caps">他写给这里看的</span>
+      <button class="mini" id="momRefresh" style="margin-left:auto">刷新</button>
     </div>
 
     <div id="momFeed">
       ${list.length === 0
-        ? '<div class="empty">还没有动态。写第一条吧。</div>'
+        ? `<div class="soon"><span class="em">moment</span><p>他还没发过动态。<br/>等他下次醒来做点什么，就会出现在这里。</p></div>`
         : list.map((m) => `
           <article class="card ornate mom-item">
             <div class="mom-top">
-              <span class="mom-who">${whoName(m.author)}</span>
+              <span class="mom-who">江瑜</span>
               ${m.mood ? `<span class="mom-mood">${esc(m.mood)}</span>` : ''}
               <span class="mom-time">${fmtTime(m.createdAt)}</span>
             </div>
             <div class="mom-body">${esc(m.content)}</div>
             ${m.images.length ? `<div class="att-row">${m.images.map((i) => `<img src="${API}/upload/${i.id}" alt="${esc(i.name || '')}" loading="lazy" />`).join('')}</div>` : ''}
             <div class="mom-actions">
-              <button class="mom-like ${m.likes.includes(momentWho) ? 'on' : ''}" data-id="${m.id}">
-                ${m.likes.includes(momentWho) ? '♥' : '♡'} ${m.likes.length || ''}
+              <button class="mom-like ${m.likes.includes('human') ? 'on' : ''}" data-id="${m.id}">
+                ${m.likes.includes('human') ? '♥' : '♡'} ${m.likes.length || ''}
               </button>
               <button class="mom-cmt" data-id="${m.id}">评论 ${m.comments.length || ''}</button>
             </div>
             ${m.comments.length ? `<div class="mom-comments">
-              ${m.comments.map((c) => `<div class="mom-cmt-row"><b>${whoName(c.author)}</b>${esc(c.content)}</div>`).join('')}
+              ${m.comments.map((c) => `<div class="mom-cmt-row"><b>${c.author === 'self' ? '江瑜' : '我'}</b>${esc(c.content)}</div>`).join('')}
             </div>` : ''}
           </article>`).join('')}
     </div>
   `;
 
-  main.querySelectorAll('.mom-switch button').forEach((b) =>
-    b.addEventListener('click', () => {
-      momentWho = b.dataset.who;
-      pageMoments();
-    }));
-
-  let momImages = [];
-  const attachBox = $('#momAttach');
-  const fileInput = $('#momFile');
-
-  const renderAttach = () => {
-    attachBox.innerHTML = momImages.map((i, n) =>
-      `<span class="chip">🖼 ${esc(i.name || '图片')}<button data-n="${n}">×</button></span>`).join('');
-    attachBox.querySelectorAll('button').forEach((b) =>
-      b.addEventListener('click', () => { momImages.splice(Number(b.dataset.n), 1); renderAttach(); }));
-  };
-
-  $('#momImg').addEventListener('click', () => fileInput.click());
-  fileInput.addEventListener('change', async () => {
-    const files = Array.from(fileInput.files || []);
-    fileInput.value = '';
-    if (!files.length) return;
-    toast('上传中…', 1200);
-    for (const raw of files) {
-      try {
-        const f = await shrinkImage(raw);
-        const up = await api('/upload', {
-          method: 'POST',
-          body: JSON.stringify({ name: f.name, mime: f.type || 'application/octet-stream', dataBase64: await fileToBase64(f) }),
-        });
-        momImages.push({ id: up.id, name: up.name, mime: up.mime });
-      } catch (err) {
-        toast('上传失败：' + err.message, 2600);
-      }
-    }
-    renderAttach();
-  });
-
-  $('#momPost').addEventListener('click', async () => {
-    const text = $('#momText').value.trim();
-    if (!text && momImages.length === 0) return toast('写点什么');
-    try {
-      await api('/moments', {
-        method: 'POST',
-        body: JSON.stringify({ content: text, author: momentWho, images: momImages }),
-      });
-      toast('发布好了', 1200);
-      pageMoments();
-    } catch (err) {
-      toast('发布失败：' + err.message, 2600);
-    }
-  });
+  $('#momRefresh').addEventListener('click', () => pageMoments());
 
   main.querySelectorAll('.mom-like').forEach((b) =>
     b.addEventListener('click', async () => {
       try {
         await api(`/moments/${b.dataset.id}/like`, {
           method: 'POST',
-          body: JSON.stringify({ author: momentWho }),
+          body: JSON.stringify({ author: 'human' }),
         });
         pageMoments();
       } catch (err) { toast('失败：' + err.message); }
@@ -900,13 +840,14 @@ async function pageMoments() {
 
   main.querySelectorAll('.mom-cmt').forEach((b) =>
     b.addEventListener('click', async () => {
-      const text = prompt('说点什么');
+      const text = prompt('想对他说什么');
       if (!text || !text.trim()) return;
       try {
         await api(`/moments/${b.dataset.id}/comments`, {
           method: 'POST',
-          body: JSON.stringify({ content: text, author: momentWho }),
+          body: JSON.stringify({ content: text, author: 'human' }),
         });
+        toast('评论了，他下次醒来会看到', 2000);
         pageMoments();
       } catch (err) { toast('评论失败：' + err.message); }
     }));
@@ -958,6 +899,13 @@ async function pageWake() {
       <section class="card ornate">
         <div class="card-title">还有惊喜没到时间<span class="caps">${r.lockedSurprises}</span></div>
         <p style="font-size:var(--fs-small);color:var(--muted);margin:0">他藏起来的，到时间自己会解开。</p>
+      </section>` : ''}
+
+    ${r.pats && r.pats.length ? `
+      <section class="card ornate">
+        <div class="card-title">他拍了拍你<span class="caps">${r.pats.length} 次</span></div>
+        ${r.pats.map((p) => `<div class="wake-row"><div class="wake-when">${fmt(p.at)}</div>
+          <div class="wake-what">拍了你一下${p.suffix ? '，' + esc(p.suffix) : ''}</div></div>`).join('')}
       </section>` : ''}
 
     ${r.notes.length ? `

@@ -22,6 +22,8 @@ export interface WakeRoomView {
   notes: { id: string; kind: string; content: string; expiresAt: string | null }[];
   surprises: { id: string; content: string; revealAt: string; revealed: boolean }[];
   lockedSurprises: number;
+  /** 他拍拍她的记录 */
+  pats: { at: string; suffix: string | null }[];
   counts: { wakes: number; decided: number; skipped: number };
 }
 
@@ -107,11 +109,18 @@ export async function getWakeRoom(limit = 20): Promise<WakeRoomView> {
        from wake_log`,
   );
 
+  const pats = await many<{ at: string; suffix: string | null }>(
+    `select created_at as at, suffix from pats
+      where from_who = 'self'
+      order by created_at desc limit 10`,
+  ).catch(() => []);
+
   return {
     entries,
     notes: notes.map((n) => ({ id: n.id, kind: n.kind, content: n.content, expiresAt: n.expires_at })),
     surprises: visible,
     lockedSurprises: locked,
+    pats,
     counts: counts ?? { wakes: 0, decided: 0, skipped: 0 },
   };
 }

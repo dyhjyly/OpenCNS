@@ -3,7 +3,7 @@ import type { Response } from 'express';
 import { log, errFields } from '../logger.js';
 import { chatText, chatTextStream, type ChatMessage, type ContentPart } from '../llm/client.js';
 import { readTextUpload, readUpload } from './uploads.js';
-import { recentPats } from '../social/moments.js';
+import { recentPats, recentHumanComments } from '../social/moments.js';
 import { buildDriveHints } from '../drives/render.js';
 import { processTurnSignals } from '../drives/signals.js';
 import { compressOutOfWindow, compressWholeSession } from '../memory/compress/pipeline.js';
@@ -134,6 +134,14 @@ async function prepareTurn(req: ChatRequest): Promise<PreparedTurn> {
       const block = ['【她刚拍了拍你】', ...lines].join('\n');
       contextBlock = contextBlock ? `${contextBlock}\n\n${block}` : block;
     }
+  }
+
+  // 她评论了你的动态 —— 得让他知道，不然评论就是石沉大海
+  const cmts = await recentHumanComments(24).catch(() => []);
+  if (cmts.length > 0) {
+    const lines = cmts.map((c) => `· 你发过「${c.head}」，她评论了：「${c.comment}」`);
+    const block = ['【她评论了你的动态】', ...lines].join('\n');
+    contextBlock = contextBlock ? `${contextBlock}\n\n${block}` : block;
   }
 
   /*
