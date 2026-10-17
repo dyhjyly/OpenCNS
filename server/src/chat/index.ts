@@ -3,8 +3,9 @@ import type { Response } from 'express';
 import { log, errFields } from '../logger.js';
 import { chatText, chatTextStream, type ChatMessage, type ContentPart } from '../llm/client.js';
 import { readTextUpload, readUpload } from './uploads.js';
-import { recentPats, recentHumanComments } from '../social/moments.js';
+import { recentPats, recentHumanComments, recentSelfComments } from '../social/moments.js';
 import { sleepContext } from '../health/sleep.js';
+import { runToolPass } from './tools.js';
 import { buildDriveHints } from '../drives/render.js';
 import { processTurnSignals } from '../drives/signals.js';
 import { compressOutOfWindow, compressWholeSession } from '../memory/compress/pipeline.js';
@@ -146,6 +147,19 @@ async function prepareTurn(req: ChatRequest): Promise<PreparedTurn> {
   }
 
   /*
+   * 他自己在朋友圈说过的话。
+   *
+   * 踩过的坑：他在她那条动态下面回了一句，之后她问"你刚回我什么了"，
+   * 他完全不记得——只记得自己发过动态。回答"我不记得说过"比答错更伤人。
+   */
+  const myCmts = await recentSelfComments(72).catch(() => []);
+  if (myCmts.length > 0) {
+    const lines = myCmts.map((c) => `· 你在她的「${c.head}」下面回过：「${c.comment}」`);
+    const block = ['【你在朋友圈说过的话】', ...lines].join('\n');
+    contextBlock = contextBlock ? `${contextBlock}\n\n${block}` : block;
+  }
+
+  /*
    * 她最近的睡眠。
    *
    * 她发手环截图就是为了省事 —— 如果还要她口述数字，这个功能就白做了。
@@ -162,6 +176,21 @@ async function prepareTurn(req: ChatRequest): Promise<PreparedTurn> {
       .filter(Boolean)
       .join('\n');
     contextBlock = contextBlock ? `${contextBlock}\n\n${block}` : block;
+  }
+
+  /*
+   * 他自己去查的数据（步数 / 喝水 / 经期 / 每日状态）。
+   *
+   * 这几样她说过"平时我自己记就好，他想看的时候再问系统要"，
+   * 所以不常驻上下文，而是让他用工具真的去查 —— 这样他不会凭印象编数字。
+   * 只有她的话沾到这些话题时才跑这一趟，免得每轮都多一次调用。
+   */
+  const toolPass = await runToolPass(
+    history.map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content }) as const),
+  ).catch(() => ({ block: '', used: [] as string[] }));
+  if (toolPass.block) {
+    contextBlock = contextBlock ? `${contextBlock}\n\n${toolPass.block}` : toolPass.block;
+    log.info('他查了数据', { tools: toolPass.used });
   }
 
   /*

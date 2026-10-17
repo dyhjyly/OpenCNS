@@ -212,8 +212,90 @@ export async function chatJson<T>(messages: ChatMessage[], opts: ChatOptions = {
   return extractJson<T>(text);
 }
 
-/** 端点实际支持哪些模型（用于设置接口的白名单校验，避免把错字写进库） */
-export async function listModels(): Promise<string[]> {
+/* ─────────── 工具调用 ─────────── */
+
+export interface ToolDef {
+  type: 'function';
+  function: { name: string; description: string; parameters: unknown };
+}
+
+export interface ToolCall {
+  id: string;
+  name: string;
+  arguments: string;
+}
+
+/**
+ * 带工具的一次调用（非流式）。
+ *
+ * 用来做"按需查数据"：她想让他看步数/经期，他说"我查一下"就该真去查，
+ * 而不是凭印象猜。模型返回 tool_calls 时不产出正文，由调用方执行后再问一次。
+ */
+export async function chatWithTools(
+  messages: ChatMessage[],
+  tools: ToolDef[],
+  opts: ChatOptions = {},
+): Promise<{ content: string; toolCalls: ToolCall[] }> {
+  const ep = pick({ ...opts, label: opts.label ?? 'tools' });
+  if (!ep.baseUrl || !ep.apiKey || !ep.model) throw new Error('模型端点配置不完整');
+
+  const body: Record<string, unknown> = {
+    model: opts.model ?? ep.model,
+    messages,
+    temperature: opts.temperature ?? 0.2,
+    max_tokens: opts.maxTokens ?? 800,
+    stream: false,
+    tools,
+    tool_choice: 'auto',
+  };
+  if (ep.effort) body.effort = ep.effort;
+
+  const started = Date.now();
+  const res = await fetch(`${ep.baseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${ep.apiKey}` },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(opts.timeoutMs ?? 60_000),
+  });
+
+  if (!res.ok) {
+    const t = await res.text().catch(() => '');
+    throw new Error(`工具调用 HTTP ${res.status}: ${t.slice(0, 200)}`);
+  }
+
+  const json = (await res.json()) as {
+    choices?: {
+      message?: {
+        content?: string;
+        tool_calls?: { id?: string; function?: { name?: string; arguments?: string } }[];
+      };
+    }[];
+    usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_cache_hit_tokens?: number };
+  };
+
+  recordUsage({
+    endpoint: opts.endpoint ?? 'chat',
+    model: opts.model ?? ep.model,
+    label: ep.label,
+    promptTokens: json.usage?.prompt_tokens ?? 0,
+    completionTokens: json.usage?.completion_tokens ?? 0,
+    cachedTokens: json.usage?.prompt_cache_hit_tokens ?? 0,
+    ms: Date.now() - started,
+  });
+
+  const msg = json.choices?.[0]?.message;
+  const toolCalls: ToolCall[] = (msg?.tool_calls ?? [])
+    .filter((c) => c?.function?.name)
+    .map((c, i) => ({
+      id: c.id ?? `call_${i}`,
+      name: String(c.function?.name),
+      arguments: String(c.function?.arguments ?? '{}'),
+    }));
+
+  return { content: msg?.content ?? '', toolCalls };
+}
+
+/** 端点实际支持哪些模型（用于设置接口的白名单校验，避免把错字写进库） */export async function listModels(): Promise<string[]> {
   const ep = pick({ endpoint: 'chat' });
   if (!ep.baseUrl || !ep.apiKey) throw new Error('端点配置不完整，无法列模型');
   const res = await fetch(`${ep.baseUrl}/models`, {

@@ -842,8 +842,7 @@ body.memory-mode .main { min-height: 0; overflow: hidden; display: flex; }
   font-family: var(--f-title); font-weight: 700; font-size: 12.5px;
 }
 
-/* 睡眠记录行 */
-.sleep-row {
+/* 睡眠记录行 */.sleep-row {
   width: 100%; display: grid;
   grid-template-columns: 46px 58px 1fr;
   grid-template-areas: "date main sub" "date bed bed";
@@ -865,6 +864,46 @@ body.memory-mode .main { min-height: 0; overflow: hidden; display: flex; }
 .sleep-bed {
   grid-area: bed; font-family: var(--f-body-en); font-size: 10.5px;
   color: var(--muted); opacity: .8; letter-spacing: .04em;
+}
+
+/* 身体数据表单 */
+.health-form {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+}
+.health-form label {
+  display: flex; flex-direction: column; gap: 4px;
+  font-family: var(--f-title); font-weight: 700; font-size: 12px; color: var(--muted);
+}
+.health-form input {
+  width: 100%; padding: 9px 11px; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--bg2); color: var(--text);
+  font-family: var(--f-body-en); font-size: 14px; outline: none;
+}
+
+/* 日历 */
+.cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px }
+.cal-title { font-family: var(--f-title); font-weight: 700; font-size: 15px }
+.cal-grid {
+  display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px;
+  text-align: center;
+}
+.cal-dow {
+  font-size: 10.5px; color: var(--muted); padding-bottom: 4px;
+  font-family: var(--f-title); font-weight: 700;
+}
+.cal-day {
+  position: relative; aspect-ratio: 1; border: 1px solid transparent;
+  border-radius: 10px; background: transparent; color: var(--text);
+  font-family: var(--f-body-en); font-size: 12.5px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+.cal-day.has { background: color-mix(in srgb, var(--accent-soft) 22%, transparent) }
+.cal-day.period { background: color-mix(in srgb, #D98CA6 34%, transparent) }
+.cal-day.mark { border-color: var(--accent) }
+.cal-mark {
+  position: absolute; right: 2px; bottom: 1px;
+  font-size: 8px; font-style: normal; color: var(--accent);
+  font-family: var(--f-title); font-weight: 700;
 }
 
 

@@ -345,6 +345,32 @@ export async function decideAndAct(input: {
         case 'comment': {
           await commentAsSelf(a.momentId, a.content);
           commented++;
+          /*
+           * 记成自己的经历。
+           *
+           * 踩过的坑：他醒来评论了她的动态，之后她在聊天里问"你刚回我什么了"，
+           * 他完全不记得 —— 因为那条评论只落在朋友圈表里，从来没进过他的记忆。
+           * 只记得"发过动态"，不记得"说过什么"，这在体验上就是失忆。
+           */
+          const head = await one<{ head: string }>(
+            `select left(content, 40) as head from moments where id = $1`,
+            [a.momentId],
+          ).catch(() => null);
+          await one(
+            `insert into memory_items (
+               kind, origin, subject, content, quotes, causal,
+               event_time, event_time_precision, ingested_at,
+               privacy, state, importance, decay_score, provenance
+             ) values (
+               'experience', 'auto', 'self', $1, '[]'::jsonb, null,
+               now(), 'exact', now(),
+               'private', 'active', 0.5, 1.0, $2::jsonb
+             )`,
+            [
+              `我在她那条「${head?.head ?? '动态'}」下面回了她一句：「${a.content}」`,
+              JSON.stringify({ source: 'social', kind: 'comment', momentId: a.momentId }),
+            ],
+          ).catch(() => undefined);
           break;
         }
         case 'like': {

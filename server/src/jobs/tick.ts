@@ -132,6 +132,16 @@ function buildJobs(): JobDefinition[] {
       },
     },
     {
+      // 健康数据只留近两周：越攒越多、价值掉得快，留着只会让查询变慢、上下文变脏
+      key: 'health_prune',
+      kind: 'maintenance',
+      everyMs: 6 * 60 * 60_000,
+      async run() {
+        const { pruneHealth } = await import('../health/metrics.js');
+        await pruneHealth();
+      },
+    },
+    {
       // M6：欲望的时间侧。缓动回归 + 沉默信号 + 过夜脉冲
       key: 'drive_tick',
       kind: 'drives',

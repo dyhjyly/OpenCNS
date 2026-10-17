@@ -383,6 +383,104 @@ export function startHttpServer(): Server {
     }
   });
 
+  /* ─── 日历 / 经期 ─── */
+  app.get('/calendar', requireToken, async (req, res) => {
+    try {
+      const { calendarMonth } = await import('../calendar/index.js');
+      const now = new Date();
+      const year = Number(req.query.year ?? now.getFullYear());
+      const month = Number(req.query.month ?? now.getMonth() + 1);
+      return res.json({ ok: true, year, month, ...(await calendarMonth(year, month)) });
+    } catch (err) {
+      return res.status(500).json(errFields(err));
+    }
+  });
+
+  app.post('/calendar/day', requireToken, async (req, res) => {
+    try {
+      const { upsertDailyState } = await import('../calendar/index.js');
+      const b = (req.body ?? {}) as { day?: string; mood?: string; energy?: number; note?: string };
+      if (!b.day) return res.status(400).json({ error: 'day_required' });
+      await upsertDailyState({ day: b.day, mood: b.mood ?? null, energy: b.energy ?? null, note: b.note ?? null });
+      return res.json({ ok: true });
+    } catch (err) {
+      return res.status(500).json(errFields(err));
+    }
+  });
+
+  app.delete('/calendar/day/:day', requireToken, async (req, res) => {
+    try {
+      const { deleteDailyState } = await import('../calendar/index.js');
+      await deleteDailyState(String(req.params.day));
+      return res.json({ ok: true });
+    } catch (err) {
+      return res.status(500).json(errFields(err));
+    }
+  });
+
+  app.get('/calendar/cycle', requireToken, async (_req, res) => {
+    try {
+      const { cycleStatus, listCycleEntries } = await import('../calendar/index.js');
+      return res.json({ ok: true, status: await cycleStatus(), entries: await listCycleEntries(24) });
+    } catch (err) {
+      return res.status(500).json(errFields(err));
+    }
+  });
+
+  app.post('/calendar/cycle', requireToken, async (req, res) => {
+    try {
+      const { addCycleEntry } = await import('../calendar/index.js');
+      const b = (req.body ?? {}) as { kind?: string; day?: string; note?: string };
+      const kind = b.kind === 'end' ? 'end' : 'start';
+      const day = b.day ?? new Date().toISOString().slice(0, 10);
+      await addCycleEntry(kind, day, b.note ?? null);
+      return res.json({ ok: true });
+    } catch (err) {
+      return res.status(500).json(errFields(err));
+    }
+  });
+
+  app.delete('/calendar/cycle/:kind/:day', requireToken, async (req, res) => {
+    try {
+      const { deleteCycleEntry } = await import('../calendar/index.js');
+      const kind = String(req.params.kind) === 'end' ? 'end' : 'start';
+      await deleteCycleEntry(kind, String(req.params.day));
+      return res.json({ ok: true });
+    } catch (err) {
+      return res.status(500).json(errFields(err));
+    }
+  });
+
+  /* ─── 身体数据（只留近两周）─── */
+  app.get('/health', requireToken, async (req, res) => {
+    try {
+      const { listHealth, KEEP_DAYS } = await import('../health/metrics.js');
+      const days = Math.min(KEEP_DAYS, Math.max(1, Number(req.query.days ?? KEEP_DAYS)));
+      return res.json({ ok: true, keepDays: KEEP_DAYS, days: await listHealth(days) });
+    } catch (err) {
+      return res.status(500).json(errFields(err));
+    }
+  });
+
+  app.post('/health', requireToken, async (req, res) => {
+    try {
+      const { upsertHealth } = await import('../health/metrics.js');
+      const b = (req.body ?? {}) as Record<string, unknown>;
+      const num = (v: unknown) => (v === undefined || v === null || v === '' ? null : Number(v));
+      const row = await upsertHealth({
+        day: typeof b.day === 'string' ? b.day : undefined,
+        steps: num(b.steps),
+        calories: num(b.calories),
+        waterMl: num(b.waterMl),
+        activeMin: num(b.activeMin),
+        note: typeof b.note === 'string' ? b.note : null,
+      });
+      return res.json({ ok: true, row });
+    } catch (err) {
+      return res.status(500).json(errFields(err));
+    }
+  });
+
   app.post('/sleep/analyze', requireToken, async (req, res) => {
     try {
       const uploadId = String((req.body as { uploadId?: string })?.uploadId ?? '');

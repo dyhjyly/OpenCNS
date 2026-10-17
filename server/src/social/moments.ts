@@ -230,6 +230,24 @@ export async function recentHumanActivity(hours = 72): Promise<{
   }
 }
 
+/** 他最近在朋友圈说过的话（她问起时不能"不记得自己说过"） */
+export async function recentSelfComments(hours = 72): Promise<{ head: string; comment: string; at: string }[]> {
+  try {
+    return await many<{ head: string; comment: string; at: string }>(
+      `select left(m.content, 40) as head, c.content as comment, c.created_at as at
+         from moment_comments c
+         join moments m on m.id = c.moment_id
+        where c.author = 'self' and m.deleted_at is null
+          and c.created_at > now() - ($1 || ' hours')::interval
+        order by c.created_at desc limit 5`,
+      [String(hours)],
+    );
+  } catch (err) {
+    log.warn('读他自己的评论失败', errFields(err));
+    return [];
+  }
+}
+
 /** 他最近发过的动态（避免重复，也让他知道自己上一条写了什么） */
 export async function recentSelfMoments(hours = 72): Promise<{ id: string; content: string; at: string }[]> {
   try {

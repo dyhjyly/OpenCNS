@@ -1471,8 +1471,8 @@ const TOOL_ITEMS = [
   { id: 'usage', label: '记账', desc: '余额 · 用量 · 趋势', em: '¥' },
   { id: 'status', label: '系统状态', desc: '数据库 · 向量 · 闸门 · 任务', em: '◎' },
   { id: 'sleep', label: '睡眠', desc: '手环截图 → 记录 → 趋势', em: '☾' },
-  { id: 'health', label: '健康', desc: '还没做', em: '❤', soon: true },
-  { id: 'calendar', label: '日历', desc: '事件 · 提醒', em: '▦', soon: true },
+  { id: 'health', label: '身体', desc: '步数 · 消耗 · 喝水（留两周）', em: '❤' },
+  { id: 'calendar', label: '日历', desc: '每日状态 · 经期', em: '▦' },
   { id: 'games', label: '游戏', desc: '还没想好', em: '✧', soon: true },
 ];
 
@@ -1507,10 +1507,209 @@ async function pageTool(id) {
   if (id === 'usage') return pageToolUsage();
   if (id === 'status') return pageToolStatus();
   if (id === 'sleep') return pageToolSleep();
+  if (id === 'health') return pageToolHealth();
+  if (id === 'calendar') return pageToolCalendar();
   const t = TOOL_ITEMS.find((x) => x.id === id);
   $('#main').innerHTML = `${toolBackRow(t ? t.label : '')}
     <div class="soon"><span class="em">${t ? t.em : '✧'}</span><p>这个模块还没做。</p></div>`;
   bindToolBack();
+}
+
+/* ─────────── 工具 · 身体（步数/消耗/喝水）─────────── */
+const todayISO = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
+async function pageToolHealth() {
+  const main = $('#main');
+  main.innerHTML = `${toolBackRow('身体')}<div class="empty">读取中…</div>`;
+  bindToolBack();
+
+  let data;
+  try {
+    data = await api('/health?days=14');
+  } catch (err) {
+    main.innerHTML = `${toolBackRow('身体')}<div class="empty">读不到（${esc(err.message)}）</div>`;
+    bindToolBack();
+    return;
+  }
+
+  const rows = data.days || [];
+  const today = rows.find((r) => r.day === todayISO()) || null;
+
+  main.innerHTML = `
+    ${toolBackRow('身体')}
+    <section class="card ornate">
+      <div class="card-title">今天<span class="caps">${esc(todayISO())}</span></div>
+      <div class="health-form">
+        <label>步数<input type="number" id="hSteps" inputmode="numeric" value="${today?.steps ?? ''}" placeholder="8000" /></label>
+        <label>消耗<input type="number" id="hCal" inputmode="numeric" value="${today?.calories ?? ''}" placeholder="千卡" /></label>
+        <label>喝水<input type="number" id="hWater" inputmode="numeric" value="${today?.waterMl ?? ''}" placeholder="ml" /></label>
+        <label>活动<input type="number" id="hActive" inputmode="numeric" value="${today?.activeMin ?? ''}" placeholder="分钟" /></label>
+      </div>
+      <div class="row" style="border:0;padding:12px 0 0">
+        <button class="mini" id="hSave">存今天</button>
+        <span class="v">只保留最近 ${data.keepDays} 天，更早的自动删</span>
+      </div>
+    </section>
+
+    <section class="card ornate">
+      <div class="card-title">近 ${data.keepDays} 天</div>
+      ${rows.length === 0 ? '<div class="empty">还没有记录</div>' : rows.map((r) => `
+        <div class="row">
+          <span class="k" style="font-size:13px">${r.day.slice(5)}</span>
+          <span class="v">${r.steps ?? '—'} 步 · ${r.calories ?? '—'} 千卡 · ${r.waterMl ?? '—'}ml${r.activeMin ? ` · 活动 ${r.activeMin} 分` : ''}</span>
+        </div>`).join('')}
+    </section>
+  `;
+  bindToolBack();
+
+  $('#hSave').addEventListener('click', async () => {
+    const val = (id) => {
+      const v = $(id).value.trim();
+      return v === '' ? null : Number(v);
+    };
+    try {
+      await api('/health', {
+        method: 'POST',
+        body: JSON.stringify({
+          day: todayISO(),
+          steps: val('#hSteps'),
+          calories: val('#hCal'),
+          waterMl: val('#hWater'),
+          activeMin: val('#hActive'),
+        }),
+      });
+      toast('记好了', 1400);
+      pageToolHealth();
+    } catch (err) {
+      toast('保存失败：' + err.message, 2600);
+    }
+  });
+}
+
+/* ─────────── 工具 · 日历（每日状态 + 经期）─────────── */
+async function pageToolCalendar(ym) {
+  const main = $('#main');
+  const now = new Date();
+  const year = ym?.year ?? now.getFullYear();
+  const month = ym?.month ?? now.getMonth() + 1;
+  main.innerHTML = `${toolBackRow('日历')}<div class="empty">读取中…</div>`;
+  bindToolBack();
+
+  let cal;
+  let cyc;
+  try {
+    [cal, cyc] = await Promise.all([
+      api(`/calendar?year=${year}&month=${month}`),
+      api('/calendar/cycle'),
+    ]);
+  } catch (err) {
+    main.innerHTML = `${toolBackRow('日历')}<div class="empty">读不到（${esc(err.message)}）</div>`;
+    bindToolBack();
+    return;
+  }
+
+  const first = new Date(year, month - 1, 1);
+  const startPad = (first.getDay() + 6) % 7; // 周一为第一列
+  const st = cyc.status;
+
+  main.innerHTML = `
+    ${toolBackRow('日历')}
+    <section class="card ornate">
+      <div class="cal-head">
+        <button class="mini" id="calPrev">‹</button>
+        <span class="cal-title">${year} 年 ${month} 月</span>
+        <button class="mini" id="calNext">›</button>
+      </div>
+      <div class="cal-grid">
+        ${['一', '二', '三', '四', '五', '六', '日'].map((d) => `<span class="cal-dow">${d}</span>`).join('')}
+        ${Array.from({ length: startPad }, () => '<span></span>').join('')}
+        ${cal.days.map((d) => `
+          <button class="cal-day ${d.inPeriod ? 'period' : ''} ${d.state ? 'has' : ''} ${d.cycle ? 'mark' : ''}"
+                  data-day="${d.day}" title="${d.state ? esc([d.state.mood, d.state.note].filter(Boolean).join(' / ')) : ''}">
+            ${Number(d.day.slice(8))}
+            ${d.cycle ? `<i class="cal-mark">${d.cycle === 'start' ? '起' : '止'}</i>` : ''}
+          </button>`).join('')}
+      </div>
+      <p style="font-size:var(--fs-small);color:var(--muted);margin:10px 0 0">
+        点一天可以记状态；粉色是经期里。
+      </p>
+    </section>
+
+    <section class="card ornate">
+      <div class="card-title">经期</div>
+      <div class="row"><span class="k">上次开始</span><span class="v">${st.lastStart ?? '还没记过'}</span></div>
+      <div class="row"><span class="k">这次</span><span class="v">${st.ongoing ? '还没点结束' : '—'}</span></div>
+      <div class="row"><span class="k">平均周期</span><span class="v">${st.avgLengthDays ? `${st.avgLengthDays} 天（${st.samples} 次记录）` : '—'}</span></div>
+      <div class="row"><span class="k">下次大概</span><span class="v">${st.nextEstimate ? `${st.nextEstimate}（${st.daysUntilNext > 0 ? '还有 ' + st.daysUntilNext + ' 天' : '已过 ' + (-st.daysUntilNext) + ' 天'}，估算）` : '—'}</span></div>
+      <div class="row" style="border:0;padding-top:12px">
+        <button class="mini" id="cycStart">今天开始</button>
+        <button class="mini" id="cycEnd" style="margin-left:8px">今天结束</button>
+      </div>
+    </section>
+
+    <section class="card ornate">
+      <div class="card-title">每日状态<span class="caps">最近</span></div>
+      ${cal.days.filter((d) => d.state).length === 0
+        ? '<div class="empty">这个月还没有记录</div>'
+        : cal.days.filter((d) => d.state).slice().reverse().map((d) => `
+          <div class="row">
+            <span class="k" style="font-size:13px">${d.day.slice(5)}</span>
+            <span class="v">${esc([d.state.mood, d.state.energy ? `精力 ${d.state.energy}/5` : null, d.state.note].filter(Boolean).join(' · '))}</span>
+          </div>`).join('')}
+    </section>
+  `;
+  bindToolBack();
+
+  $('#calPrev').addEventListener('click', () => {
+    const m = month - 1;
+    pageToolCalendar(m < 1 ? { year: year - 1, month: 12 } : { year, month: m });
+  });
+  $('#calNext').addEventListener('click', () => {
+    const m = month + 1;
+    pageToolCalendar(m > 12 ? { year: year + 1, month: 1 } : { year, month: m });
+  });
+
+  main.querySelectorAll('.cal-day').forEach((b) =>
+    b.addEventListener('click', async () => {
+      const day = b.dataset.day;
+      const cur = cal.days.find((d) => d.day === day)?.state;
+      const mood = prompt(`${day} 心情？（开心/累/低落…留空就不改）`, cur?.mood ?? '');
+      if (mood === null) return;
+      const energy = prompt('精力 1~5？（留空就不改）', cur?.energy ? String(cur.energy) : '');
+      if (energy === null) return;
+      const note = prompt('想记一句什么？', cur?.note ?? '');
+      if (note === null) return;
+      try {
+        await api('/calendar/day', {
+          method: 'POST',
+          body: JSON.stringify({
+            day,
+            mood: mood.trim() || null,
+            energy: energy.trim() ? Number(energy) : null,
+            note: note.trim() || null,
+          }),
+        });
+        toast('记好了', 1200);
+        pageToolCalendar({ year, month });
+      } catch (err) {
+        toast('保存失败：' + err.message, 2400);
+      }
+    }));
+
+  const markCycle = async (kind) => {
+    try {
+      await api('/calendar/cycle', { method: 'POST', body: JSON.stringify({ kind, day: todayISO() }) });
+      toast(kind === 'start' ? '记下了开始' : '记下了结束', 1400);
+      pageToolCalendar({ year, month });
+    } catch (err) {
+      toast('失败：' + err.message, 2400);
+    }
+  };
+  $('#cycStart').addEventListener('click', () => markCycle('start'));
+  $('#cycEnd').addEventListener('click', () => markCycle('end'));
 }
 
 /* ─────────── 工具 · 睡眠 ─────────── */
