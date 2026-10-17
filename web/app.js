@@ -1799,6 +1799,25 @@ async function pageToolCalendar(ym) {
         <button class="mini" id="cycStart">今天开始</button>
         <button class="mini" id="cycEnd" style="margin-left:8px">今天结束</button>
       </div>
+
+      <div class="cyc-backfill">
+        <div class="cb-head">忘了记？补到某一天</div>
+        <input type="date" id="cycDay" value="${todayISO()}" max="${todayISO()}" />
+        <div class="cb-btns">
+          <button class="mini" id="cycStartOn">记为开始</button>
+          <button class="mini" id="cycEndOn">记为结束</button>
+          <button class="mini ghost" id="cycClear">取消这天标记</button>
+        </div>
+      </div>
+
+      ${(cyc.entries || []).length ? `
+        <div class="cyc-list">
+          ${cyc.entries.map((e) => `
+            <div class="row">
+              <span class="k" style="font-size:12.5px">${e.day.slice(5)} <span class="cyc-kind">${e.kind === 'start' ? '开始' : '结束'}</span></span>
+              <button class="mini ghost" data-cyc-del="${e.kind}:${e.day}">删</button>
+            </div>`).join('')}
+        </div>` : ''}
     </section>
 
     <section class="card ornate">
@@ -1850,10 +1869,10 @@ async function pageToolCalendar(ym) {
       }
     }));
 
-  const markCycle = async (kind) => {
+  const markCycle = async (kind, day) => {
     try {
-      await api('/calendar/cycle', { method: 'POST', body: JSON.stringify({ kind, day: todayISO() }) });
-      toast(kind === 'start' ? '记下了开始' : '记下了结束', 1400);
+      await api('/calendar/cycle', { method: 'POST', body: JSON.stringify({ kind, day: day || todayISO() }) });
+      toast(`${day && day !== todayISO() ? day.slice(5) + ' ' : '今天'}记下了${kind === 'start' ? '开始' : '结束'}`, 1600);
       pageToolCalendar({ year, month });
     } catch (err) {
       toast('失败：' + err.message, 2400);
@@ -1861,6 +1880,36 @@ async function pageToolCalendar(ym) {
   };
   $('#cycStart').addEventListener('click', () => markCycle('start'));
   $('#cycEnd').addEventListener('click', () => markCycle('end'));
+
+  // 补记：忘了当天记，也可以补到过去某一天
+  $('#cycStartOn').addEventListener('click', () => markCycle('start', $('#cycDay').value));
+  $('#cycEndOn').addEventListener('click', () => markCycle('end', $('#cycDay').value));
+  $('#cycClear').addEventListener('click', async () => {
+    const day = $('#cycDay').value;
+    if (!day) return toast('先选一天');
+    try {
+      await Promise.all([
+        api(`/calendar/cycle/start/${day}`, { method: 'DELETE' }),
+        api(`/calendar/cycle/end/${day}`, { method: 'DELETE' }),
+      ]);
+      toast(`${day.slice(5)} 的标记清掉了`, 1400);
+      pageToolCalendar({ year, month });
+    } catch (err) {
+      toast('失败：' + err.message, 2400);
+    }
+  });
+
+  main.querySelectorAll('[data-cyc-del]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      const [kind, day] = String(b.dataset.cycDel).split(':');
+      try {
+        await api(`/calendar/cycle/${kind}/${day}`, { method: 'DELETE' });
+        toast('删掉了', 1200);
+        pageToolCalendar({ year, month });
+      } catch (err) {
+        toast('失败：' + err.message, 2400);
+      }
+    }));
 }
 
 /* ─────────── 工具 · 睡眠 ─────────── */
