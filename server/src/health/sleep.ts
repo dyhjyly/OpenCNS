@@ -239,8 +239,78 @@ export async function listSleep(days = 30): Promise<SleepRecord[]> {
   }));
 }
 
-export interface SleepStats {
-  count: number;
+/* ─────────── 给对话与唤醒用的上下文 ─────────── */
+
+export interface SleepContext {
+  /** 给模型看的几行 */
+  lines: string[];
+  /** 是不是刚上传的（几小时内），决定要不要说"她刚发了" */
+  fresh: boolean;
+}
+
+const hmText = (min: number | null): string => {
+  if (min === null || min === undefined) return '';
+  const h = Math.floor(min / 60);
+  const m = Math.round(min % 60);
+  return h > 0 ? `${h} 小时${m ? ` ${m} 分` : ''}` : `${m} 分钟`;
+};
+
+/**
+ * 她最近的睡眠，压缩成几行给模型看。
+ *
+ * 要点：**不要让她自己再报一遍数字**。她发截图是为了省事，
+ * 如果他还问"你睡了几个小时"，那这个功能就白做了。
+ */
+export async function sleepContext(): Promise<SleepContext> {
+  try {
+    const rows = await many<{
+      night: string;
+      bedtime: string | null;
+      wake_time: string | null;
+      total_minutes: number | null;
+      deep_minutes: number | null;
+      awake_count: number | null;
+      created_at: string;
+    }>(
+      `select night::text, bedtime, wake_time, total_minutes, deep_minutes, awake_count, created_at
+         from sleep_records
+        where night > current_date - interval '3 days'
+        order by night desc limit 3`,
+    );
+    if (rows.length === 0) return { lines: [], fresh: false };
+
+    const fresh = rows.some((r) => Date.now() - new Date(r.created_at).getTime() < 6 * 3600_000);
+    const lines: string[] = [];
+
+    const top = rows[0]!;
+    const pct = top.deep_minutes && top.total_minutes ? Math.round((top.deep_minutes / top.total_minutes) * 100) : null;
+    const bits = [
+      top.total_minutes ? `一共睡了 ${hmText(top.total_minutes)}` : null,
+      top.bedtime && top.wake_time ? `${top.bedtime} 睡、${top.wake_time} 醒` : null,
+      top.deep_minutes !== null ? `深睡 ${hmText(top.deep_minutes)}${pct !== null ? `（${pct}%）` : ''}` : null,
+      top.awake_count !== null ? `夜里醒了 ${top.awake_count} 次` : null,
+    ].filter(Boolean);
+
+    lines.push(`· ${top.night.slice(5)}：${bits.join('，')}`);
+
+    const st = await sleepStats(14);
+    if (st.count >= 2) {
+      const avgBits = [
+        st.avgTotalMinutes ? `平均 ${hmText(st.avgTotalMinutes)}` : null,
+        st.avgDeepPct !== null ? `深睡 ${st.avgDeepPct}%` : null,
+        st.avgBedtime ? `平均 ${st.avgBedtime} 入睡` : null,
+      ].filter(Boolean);
+      lines.push(`· 最近 ${st.count} 晚：${avgBits.join('，')}`);
+    }
+
+    return { lines, fresh };
+  } catch (err) {
+    log.warn('读睡眠上下文失败', errFields(err));
+    return { lines: [], fresh: false };
+  }
+}
+
+export interface SleepStats {  count: number;
   avgTotalMinutes: number | null;
   avgDeepPct: number | null;
   worstDeepPct: number | null;

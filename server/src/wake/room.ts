@@ -169,6 +169,13 @@ export async function buildRoomPack(): Promise<RoomPack> {
     parts.push('');
   }
 
+  // 她最近的睡眠：他醒来时应该知道，不然"关心她睡得好不好"就是一句空话
+  const { sleepContext } = await import('../health/sleep.js');
+  const sleepCtx = await sleepContext().catch(() => ({ lines: [], fresh: false }));
+  if (sleepCtx.lines.length > 0) {
+    parts.push('【她最近的睡眠】', ...sleepCtx.lines, '');
+  }
+
   if (parts.length <= 3) parts.push('（房间里空空的——你还没留下过什么。）');
 
   const { text, hits } = sanitize(parts.join('\n'));

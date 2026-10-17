@@ -4,6 +4,7 @@ import { log, errFields } from '../logger.js';
 import { chatText, chatTextStream, type ChatMessage, type ContentPart } from '../llm/client.js';
 import { readTextUpload, readUpload } from './uploads.js';
 import { recentPats, recentHumanComments } from '../social/moments.js';
+import { sleepContext } from '../health/sleep.js';
 import { buildDriveHints } from '../drives/render.js';
 import { processTurnSignals } from '../drives/signals.js';
 import { compressOutOfWindow, compressWholeSession } from '../memory/compress/pipeline.js';
@@ -141,6 +142,25 @@ async function prepareTurn(req: ChatRequest): Promise<PreparedTurn> {
   if (cmts.length > 0) {
     const lines = cmts.map((c) => `· 你发过「${c.head}」，她评论了：「${c.comment}」`);
     const block = ['【她评论了你的动态】', ...lines].join('\n');
+    contextBlock = contextBlock ? `${contextBlock}\n\n${block}` : block;
+  }
+
+  /*
+   * 她最近的睡眠。
+   *
+   * 她发手环截图就是为了省事 —— 如果还要她口述数字，这个功能就白做了。
+   * 所以把数据直接摆进上下文，并且明确告诉他"别问她已经给过的数字"。
+   */
+  const sleepCtx = await sleepContext().catch(() => ({ lines: [], fresh: false }));
+  if (sleepCtx.lines.length > 0) {
+    const head = sleepCtx.fresh ? '【她刚发了昨晚的睡眠截图】' : '【她最近的睡眠】';
+    const block = [
+      head,
+      ...sleepCtx.lines,
+      sleepCtx.fresh ? '（这些数字你已经知道了，不要再问她睡得怎么样、睡了多久。）' : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
     contextBlock = contextBlock ? `${contextBlock}\n\n${block}` : block;
   }
 
