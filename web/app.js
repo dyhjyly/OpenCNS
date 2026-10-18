@@ -674,9 +674,15 @@ async function pageSettings() {
         <span class="k">像 App 一样打开</span>
         <button class="mini" id="installBtn">装到桌面</button>
       </div>
+      <div class="row">
+        <span class="k">版本 · 刷新到最新</span>
+        <span class="v" style="display:flex;align-items:center;gap:10px">
+          <span style="font-family:var(--f-body-en);font-size:12px;opacity:.7">${APP_VERSION}</span>
+          <button class="mini" id="forceUpdate">刷新</button>
+        </span>
+      </div>
       <p style="font-size:var(--fs-small);color:var(--muted);margin:8px 0 0">
-        装好之后是一个独立图标，打开没有地址栏。Chrome 里如果按钮没反应，
-        就用右上角 ⋮ → 添加到主屏幕。
+        改了东西之后如果还看到旧页面，点「刷新」——只清缓存，聊天记录和登录状态都不动。
       </p>
     </section>
 
@@ -775,6 +781,11 @@ async function pageSettings() {
   });
   const installBtn = $('#installBtn');
   if (installBtn) installBtn.addEventListener('click', () => promptInstall());
+  const fu = $('#forceUpdate');
+  if (fu) fu.addEventListener('click', async () => {
+    toast('清缓存中…', 1400);
+    await forceUpdate();
+  });
   $('#mChat').addEventListener('change', (e) => save({ 'llm.chat_model': e.target.value }));
   $('#eChat').addEventListener('change', (e) => save({ 'llm.chat_effort': e.target.value }));
   $('#city').addEventListener('change', (e) => {
@@ -2455,12 +2466,35 @@ async function enterApp() {
 
 /* ─────────── 装到桌面 ─────────── */
 /**
- * Chrome 认不认这个站"可以装"，靠三件事：
- *   1. manifest 里有 PNG 图标（≥192）
- *   2. display: standalone
- *   3. 有带 fetch 的 service worker
- * 前两条本来就有，缺的是"图标只有 SVG"和"没有 SW" —— 所以 Chrome 一直说不能安装。
+ * 版本号：改前端时手动+1，显示在设置里，
+ * 这样"你看到的是不是最新的"不用猜。
  */
+const APP_VERSION = '2026-10-18.4';
+
+/**
+ * 强制更新：注销 Service Worker + 清掉所有缓存，然后重载。
+ *
+ * 为什么需要：桌面 App 里的 SW 会缓存旧页面，改完之后她打开还是老样子，
+ * 而她不可能去 Android 设置里翻"清除缓存"。
+ *
+ * 只清缓存和 SW —— **不动 cookie、不动 localStorage**，
+ * 所以聊天记录（在服务器）和登录态都不受影响。
+ */
+async function forceUpdate() {
+  try {
+    if ('serviceWorker' in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      for (const r of regs) await r.unregister();
+    }
+  } catch {}
+  try {
+    if ('caches' in window) {
+      const keys = await caches.keys();
+      for (const k of keys) await caches.delete(k);
+    }
+  } catch {}
+  location.replace(`/v2/?fresh=${Date.now()}`);
+}
 let installEvent = null;
 
 function installPwa() {
