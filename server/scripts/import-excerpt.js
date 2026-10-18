@@ -68,7 +68,7 @@ async function doImport(jsonPath) {
          event_time, event_time_precision, ingested_at,
          privacy, state, importance, decay_score, embedding, provenance
        ) values (
-         'semantic', 'import', 'user', $1, $2::jsonb, null,
+         'semantic', 'auto', 'user', $1, $2::jsonb, null,
          $3, $4, now(),
          'private', 'active', 0.6, 1.0, $5::vector, $6::jsonb
        )`,
