@@ -423,7 +423,23 @@ export async function chatTextStream(
     }
   }
 
+  /*
+   * 空回复兜底。
+   *
+   * 实测会偶发：推理吃掉预算、正文一个字都没吐出来。这在她那边表现为"他忽然不说话了"。
+   * 所以这里自动改用**非流式**重试一次（只多花一次调用），拿到正文再当成一整段 delta 吐出去。
+   */
   if (!full.trim()) {
+    log.warn('流式返回为空，改用非流式重试一次', { label: ep.label, reasoningChars });
+    try {
+      const retry = await chatText(messages, { ...opts, label: `${ep.label}-retry` });
+      if (retry.trim()) {
+        onDelta(retry);
+        return retry;
+      }
+    } catch (err) {
+      log.error('空回复重试也失败了', errFields(err));
+    }
     throw new Error(`流式返回为空（推理内容 ${reasoningChars} 字，可能预算被思考吃光）`);
   }
 
