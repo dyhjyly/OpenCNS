@@ -170,11 +170,11 @@ export async function buildRoomPack(): Promise<RoomPack> {
   }
 
   // 她最近的睡眠：他醒来时应该知道，不然"关心她睡得好不好"就是一句空话
-  const { sleepContext } = await import('../health/sleep.js');
-  const sleepCtx = await sleepContext().catch(() => ({ lines: [], fresh: false }));
-  if (sleepCtx.lines.length > 0) {
-    parts.push('【她最近的睡眠】', ...sleepCtx.lines, '');
-  }
+  /*
+   * 睡眠不放进房间了。
+   * 她说过：睡眠她自己手动记，他想看的时候用 get_sleep 查 —— 房间是"他独处时看到的东西"，
+   * 不该变成每天早上的一份体检报告。
+   */
 
   if (parts.length <= 3) parts.push('（房间里空空的——你还没留下过什么。）');
 

@@ -1,29 +1,47 @@
 import { log, errFields } from '../logger.js';
-import { chatWithTools, listModels, type ChatMessage, type ToolCall, type ToolDef } from '../llm/client.js';
+import { chatWithTools, type ChatMessage, type ToolCall, type ToolDef } from '../llm/client.js';
 import { healthContextLines } from '../health/metrics.js';
-import { sleepContext } from '../health/sleep.js';
+import { sleepContext, listSleep } from '../health/sleep.js';
 import { cycleContextLines, listDailyStates } from '../calendar/index.js';
+import { getMemoryItem } from '../memory/starmap.js';
+import { listMoments } from '../social/moments.js';
+import { query } from '../db/pool.js';
 
 /**
- * 他"想看数据的时候问系统要"。
+ * 他自己的手，不是系统推给他的东西。
  *
- * 林遇定的规矩：睡眠自动告诉我（她已经发了截图，不该再问一遍），
- * 但步数 / 喝水 / 经期 / 每日状态这些**她自己记就好**，他想要看的时候再查。
+ * 林遇定的规矩：
+ * · 记忆 —— 只给门铃（关键词 + 编号），要原文自己来拿
+ * · 朋友圈 —— 不提就不查；她回复了他的动态，留到下次醒来再说
+ * · 睡眠 / 步数 / 喝水 / 经期 / 每日状态 —— 她手动记，他想看就来查
  *
- * 所以这里用真的工具调用：模型自己决定要不要查、查哪些。
- * 为了不每轮都多一次模型调用，只在她说的话沾到这些话题时才跑这一趟。
+ * 所以这里全是"取"的动作，没有"推"。
  */
 
 const TOOLS: ToolDef[] = [
   {
     type: 'function',
     function: {
-      name: 'get_health',
-      description: '读她最近的身体数据：步数、消耗、喝水量（只保留近两周）',
+      name: 'recall_memory',
+      description: '取回某段记忆的原文。可以传门铃上的编号，也可以传关键词去搜。',
       parameters: {
         type: 'object',
-        properties: { days: { type: 'integer', description: '看最近几天，1~14' } },
-        required: ['days'],
+        properties: {
+          ids: { type: 'array', items: { type: 'string' }, description: '门铃上的编号（前 8 位即可）' },
+          query: { type: 'string', description: '没有编号时用关键词搜' },
+          limit: { type: 'integer', description: '最多取几条，默认 3' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_moments',
+      description: '看你们的朋友圈：最近的动态、她给你的评论、他回过的话。她没提就别查。',
+      parameters: {
+        type: 'object',
+        properties: { limit: { type: 'integer', description: '最多几条，默认 6' } },
       },
     },
   },
@@ -31,11 +49,21 @@ const TOOLS: ToolDef[] = [
     type: 'function',
     function: {
       name: 'get_sleep',
-      description: '读她最近的睡眠记录（时长、深睡、醒来次数）',
+      description: '读她手动记的睡眠（时长、深睡、醒来次数）。',
       parameters: {
         type: 'object',
         properties: { days: { type: 'integer', description: '看最近几天，1~30' } },
-        required: ['days'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_health',
+      description: '读她记的身体数据：步数、消耗、喝水（只保留近两周）。',
+      parameters: {
+        type: 'object',
+        properties: { days: { type: 'integer', description: '1~14' } },
       },
     },
   },
@@ -43,7 +71,7 @@ const TOOLS: ToolDef[] = [
     type: 'function',
     function: {
       name: 'get_cycle',
-      description: '读她的经期记录与推算（上次开始、平均周期、下次大概什么时候）',
+      description: '读经期记录与推算（上次开始、平均周期、下次大概）。',
       parameters: { type: 'object', properties: {} },
     },
   },
@@ -51,22 +79,53 @@ const TOOLS: ToolDef[] = [
     type: 'function',
     function: {
       name: 'get_daily_state',
-      description: '读她在日历里记的每日状态（心情、精力、一句话）',
+      description: '读她在日历里记的每日状态（心情、精力、一句话）。',
       parameters: {
         type: 'object',
-        properties: { days: { type: 'integer', description: '看最近几天，1~60' } },
-        required: ['days'],
+        properties: { days: { type: 'integer', description: '1~60' } },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'save_memory',
+      description:
+        '把这件事记进你的记忆。摘要还是保留原句，由你决定：' +
+        'kind=episode 必须同时给 quotes（原句）和 causal（这件事的因果）。',
+      parameters: {
+        type: 'object',
+        properties: {
+          kind: { type: 'string', enum: ['episode', 'semantic', 'experience', 'reflection'] },
+          content: { type: 'string', description: '你自己写的那段话（第一人称）' },
+          quotes: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: { who: { type: 'string' }, text: { type: 'string' } },
+            },
+            description: '要保住的原句（episode 必填）',
+          },
+          causal: { type: 'string', description: '为什么这件事重要 / 前因后果（episode 必填）' },
+          event_time: { type: 'string', description: 'YYYY-MM-DD；不确定就写你确定的那一天' },
+          importance: { type: 'number', description: '0~1，越重要越高' },
+        },
+        required: ['kind', 'content'],
       },
     },
   },
 ];
 
-/** 她说的话沾到这些话题时才值得跑一趟工具 */
-const TRIGGER = /步数|走路|走了多少|喝水|卡路里|消耗|健康|身体|经期|月经|生理期|周期|日历|每日状态|心情|精力|睡眠|睡得好/;
+const SYSTEM = `你叫江瑜。下面是她刚说的话，可能还有一声"门铃"（提示有些旧事相关，但没给内容）。
 
-const SYSTEM = `你在帮江瑜判断：回答她这句话，需要查一下她的身体数据吗？
-需要就调用工具去查；不需要就什么工具都别调，直接回一个空字符串。
-不要凭印象编数字。`;
+判断：要不要去取点什么？
+· 门铃响了、你也确实想知道细节 —— 用 recall_memory 取原文（别猜内容）
+· 她提到朋友圈 —— 用 get_moments
+· 她提到睡眠 / 步数 / 喝水 / 经期 / 心情 —— 用对应的工具
+· 她让你记住某件事 —— 用 save_memory
+· 都不需要 —— 什么工具都别调
+
+只做"取"或"记"，不要在工具里替她做决定。`;
 
 function parseArgs(raw: string): Record<string, unknown> {
   try {
@@ -77,22 +136,94 @@ function parseArgs(raw: string): Record<string, unknown> {
   }
 }
 
+async function recallById(id8: string): Promise<string | null> {
+  const rows = await query<{ id: string }>(
+    `select id::text from memory_items where id::text like $1 limit 1`,
+    [`${id8}%`],
+  );
+  const full = (rows as unknown as { rows?: { id: string }[] }).rows?.[0]?.id ?? null;
+  if (!full) return null;
+  const item = await getMemoryItem(full);
+  if (!item) return null;
+  const quotes = Array.isArray(item.quotes)
+    ? (item.quotes as { who?: string; text?: string }[])
+        .map((q) => `  原句（${q.who ?? '?'}）：${q.text ?? ''}`)
+        .join('\n')
+    : '';
+  return [
+    `· ${item.eventTime ? String(item.eventTime).slice(0, 10) : '没有日期'}`,
+    `  ${item.content}`,
+    quotes ? quotes : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
 async function execTool(call: ToolCall): Promise<string> {
   const args = parseArgs(call.arguments);
   const days = Number(args.days ?? 7);
+
   switch (call.name) {
+    case 'recall_memory': {
+      const ids = Array.isArray(args.ids) ? (args.ids as unknown[]).map(String) : [];
+      const out: string[] = [];
+      for (const id of ids.slice(0, Math.max(1, Number(args.limit ?? 3)))) {
+        const got = await recallById(id).catch(() => null);
+        if (got) out.push(got);
+      }
+      if (out.length === 0 && typeof args.query === 'string' && args.query.trim()) {
+        const rows = await query<{ id: string }>(
+          `select id::text from memory_items
+            where state = 'active' and content ilike $1
+            order by importance desc, ingested_at desc limit $2`,
+          [`%${args.query.trim()}%`, Math.max(1, Number(args.limit ?? 3))],
+        );
+        const list = (rows as unknown as { rows?: { id: string }[] }).rows ?? [];
+        for (const r of list) {
+          const got = await recallById(r.id).catch(() => null);
+          if (got) out.push(got);
+        }
+      }
+      return out.length ? out.join('\n\n') : '（没找到对应的记忆）';
+    }
+
+    case 'get_moments': {
+      const list = await listMoments(Math.min(20, Math.max(1, Number(args.limit ?? 6))));
+      if (list.length === 0) return '（朋友圈还是空的）';
+      return list
+        .map((m) => {
+          const who = m.author === 'self' ? '你' : '她';
+          const cs = m.comments.map((c) => `    ${c.author === 'self' ? '你' : '她'}：${c.content}`).join('\n');
+          return `· ${String(m.createdAt).slice(0, 16).replace('T', ' ')} ${who}：${m.content}${cs ? `\n${cs}` : ''}`;
+        })
+        .join('\n');
+    }
+
+    case 'get_sleep': {
+      const rows = await listSleep(Math.min(30, Math.max(1, days)));
+      if (rows.length === 0) return '（她还没记过睡眠）';
+      const lines = rows.slice(0, 7).map((r) => {
+        const pct = r.deepMinutes && r.totalMinutes ? Math.round((r.deepMinutes / r.totalMinutes) * 100) : null;
+        return `· ${r.night}：${r.totalMinutes ? Math.floor(r.totalMinutes / 60) + ' 小时 ' + (r.totalMinutes % 60) + ' 分' : '—'}${
+          r.bedtime && r.wakeTime ? `（${r.bedtime} → ${r.wakeTime}）` : ''
+        }${r.deepMinutes !== null ? `，深睡 ${r.deepMinutes} 分${pct !== null ? `（${pct}%）` : ''}` : ''}${
+          r.awakeCount !== null ? `，醒 ${r.awakeCount} 次` : ''
+        }`;
+      });
+      const ctx = await sleepContext();
+      return [...lines, ctx.lines.length ? '' : '', ...(ctx.lines.length ? ['', ...ctx.lines] : [])].join('\n').trim();
+    }
+
     case 'get_health': {
       const lines = await healthContextLines(Math.min(14, Math.max(1, days)));
-      return lines.length ? lines.join('\n') : '（没有她的身体数据）';
+      return lines.length ? lines.join('\n') : '（她还没记过身体数据）';
     }
-    case 'get_sleep': {
-      const ctx = await sleepContext();
-      return ctx.lines.length ? ctx.lines.join('\n') : '（没有睡眠记录）';
-    }
+
     case 'get_cycle': {
       const lines = await cycleContextLines();
-      return lines.length ? lines.join('\n') : '（没有经期记录）';
+      return lines.length ? lines.join('\n') : '（她还没记过经期）';
     }
+
     case 'get_daily_state': {
       const rows = await listDailyStates(Math.min(60, Math.max(1, days)));
       if (!rows.length) return '（日历里没有她的每日状态）';
@@ -101,24 +232,41 @@ async function execTool(call: ToolCall): Promise<string> {
         .map((r) => `· ${r.day.slice(5)}：${[r.mood, r.energy ? `精力 ${r.energy}/5` : null, r.note].filter(Boolean).join('，')}`)
         .join('\n');
     }
+
+    case 'save_memory': {
+      const { saveMemory } = await import('../memory/save.js');
+      return saveMemory({
+        kind: String(args.kind ?? 'semantic'),
+        content: String(args.content ?? ''),
+        quotes: Array.isArray(args.quotes) ? (args.quotes as { who?: string; text?: string }[]) : undefined,
+        causal: typeof args.causal === 'string' ? args.causal : undefined,
+        eventTime: typeof args.event_time === 'string' ? args.event_time : undefined,
+        importance: typeof args.importance === 'number' ? args.importance : undefined,
+      });
+    }
+
     default:
       return '（未知工具）';
   }
 }
 
 export interface ToolPassResult {
-  /** 要注进上下文的那段话（空字符串表示没查） */
   block: string;
   used: string[];
 }
 
-export async function runToolPass(recent: { role: 'user' | 'assistant'; content: string }[]): Promise<ToolPassResult> {
-  const last = recent.filter((m) => m.role === 'user').slice(-1)[0];
-  if (!last || !TRIGGER.test(last.content)) return { block: '', used: [] };
-
+/**
+ * 跑一趟工具路由。
+ * @param recent 最近几条对话（必须含她当前这句）
+ * @param doorbell 门铃文本（没有就空）
+ */
+export async function runToolPass(
+  recent: { role: 'user' | 'assistant'; content: string }[],
+  doorbell = '',
+): Promise<ToolPassResult> {
   const messages: ChatMessage[] = [
-    { role: 'system', content: SYSTEM },
-    ...recent.slice(-4).map((m) => ({ role: m.role, content: m.content }) as ChatMessage),
+    { role: 'system', content: SYSTEM + (doorbell ? `\n\n${doorbell}` : '') },
+    ...recent.slice(-6).map((m) => ({ role: m.role, content: m.content }) as ChatMessage),
   ];
 
   let calls: ToolCall[] = [];
@@ -126,7 +274,7 @@ export async function runToolPass(recent: { role: 'user' | 'assistant'; content:
     const out = await chatWithTools(messages, TOOLS, {
       endpoint: 'cognitive',
       temperature: 0,
-      maxTokens: 300,
+      maxTokens: 400,
       label: 'chat-tools',
     });
     calls = out.toolCalls;
@@ -151,20 +299,20 @@ export async function runToolPass(recent: { role: 'user' | 'assistant'; content:
 
   if (sections.length === 0) return { block: '', used: [] };
   return {
-    block: ['（下面是你自己去查的，不是她说的）', ...sections].join('\n'),
+    block: ['（下面是你自己去取的，不是她说的）', ...sections].join('\n'),
     used,
   };
 }
 
 function labelOf(name: string): string {
   switch (name) {
-    case 'get_health': return '你查到的身体数据';
-    case 'get_sleep': return '你查到的睡眠';
-    case 'get_cycle': return '你查到的经期';
-    case 'get_daily_state': return '你查到的每日状态';
-    default: return '你查到的';
+    case 'recall_memory': return '你翻出来的原文';
+    case 'get_moments': return '朋友圈';
+    case 'get_sleep': return '她记的睡眠';
+    case 'get_health': return '她记的身体数据';
+    case 'get_cycle': return '她记的经期';
+    case 'get_daily_state': return '日历里的状态';
+    case 'save_memory': return '记下来了';
+    default: return '你取到的';
   }
 }
-
-/** 顺带暴露一下模型列表（调试用） */
-export { listModels };

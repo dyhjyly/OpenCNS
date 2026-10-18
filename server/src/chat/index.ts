@@ -3,8 +3,8 @@ import type { Response } from 'express';
 import { log, errFields } from '../logger.js';
 import { chatText, chatTextStream, type ChatMessage, type ContentPart } from '../llm/client.js';
 import { readTextUpload, readUpload } from './uploads.js';
-import { recentPats, recentHumanComments, recentSelfComments } from '../social/moments.js';
-import { sleepContext } from '../health/sleep.js';
+import { recentPats } from '../social/moments.js';
+import { buildDoorbell } from '../memory/doorbell.js';
 import { runToolPass } from './tools.js';
 import { buildDriveHints } from '../drives/render.js';
 import { processTurnSignals } from '../drives/signals.js';
@@ -108,11 +108,14 @@ async function prepareTurn(req: ChatRequest): Promise<PreparedTurn> {
     getNowSnapshot(),
   ]);
 
+  // 门铃：只给关键词和编号，不给内容。要看原文他自己用 recall_memory
+  const doorbell = buildDoorbell(rec.recalled, text);
+
   let contextBlock = buildContextBlock({
-    recalled: rec.recalled,
     timeline,
     driveHints,
     now: renderNowBlock(nowSnapshot),
+    doorbell: doorbell.block,
   });
 
   // 召回为空时必须**明说**，否则模型会把"没想起"当成"可以自由发挥"。
@@ -126,7 +129,17 @@ async function prepareTurn(req: ChatRequest): Promise<PreparedTurn> {
     contextBlock = contextBlock ? `${contextBlock}\n\n${notice}` : notice;
   }
 
-  // 拍一拍：让她拍完他真的"有感"，而不是拍给空气
+  /*
+   * 朋友圈和睡眠都不再自动灌进对话。
+   *
+   * 林遇的说法：这些"每轮都带上"的东西，让他分不清哪些是她刚说的、
+   * 哪些是可以忽略的旧料。所以：
+   * · 朋友圈 —— 她提了才用 get_moments 查；她回复了他的动态，留到下次醒来再说
+   * · 睡眠 —— 她自己手动记，他想看就用 get_sleep 查
+   * 这两块以前每轮都注入，现在一行都不注入。
+   */
+
+  // 拍一拍是"刚刚发生的事件"，不是旧料，留着（否则拍给空气）
   const pats = await recentPats(30).catch(() => []);
   if (pats.length > 0) {
     const lines = pats
@@ -138,58 +151,20 @@ async function prepareTurn(req: ChatRequest): Promise<PreparedTurn> {
     }
   }
 
-  // 她评论了你的动态 —— 得让他知道，不然评论就是石沉大海
-  const cmts = await recentHumanComments(24).catch(() => []);
-  if (cmts.length > 0) {
-    const lines = cmts.map((c) => `· 你发过「${c.head}」，她评论了：「${c.comment}」`);
-    const block = ['【她评论了你的动态】', ...lines].join('\n');
-    contextBlock = contextBlock ? `${contextBlock}\n\n${block}` : block;
-  }
-
   /*
-   * 他自己在朋友圈说过的话。
+   * 他自己去查的数据。
    *
-   * 踩过的坑：他在她那条动态下面回了一句，之后她问"你刚回我什么了"，
-   * 他完全不记得——只记得自己发过动态。回答"我不记得说过"比答错更伤人。
+   * 她说过：朋友圈、睡眠、步数、经期这些"平时我自己记就好，他想看的时候再问系统要"。
+   * 所以一律不常驻上下文，全部走工具。门铃一起交给它，它才知道要不要翻原文。
    */
-  const myCmts = await recentSelfComments(72).catch(() => []);
-  if (myCmts.length > 0) {
-    const lines = myCmts.map((c) => `· 你在她的「${c.head}」下面回过：「${c.comment}」`);
-    const block = ['【你在朋友圈说过的话】', ...lines].join('\n');
-    contextBlock = contextBlock ? `${contextBlock}\n\n${block}` : block;
-  }
-
-  /*
-   * 她最近的睡眠。
-   *
-   * 她发手环截图就是为了省事 —— 如果还要她口述数字，这个功能就白做了。
-   * 所以把数据直接摆进上下文，并且明确告诉他"别问她已经给过的数字"。
-   */
-  const sleepCtx = await sleepContext().catch(() => ({ lines: [], fresh: false }));
-  if (sleepCtx.lines.length > 0) {
-    const head = sleepCtx.fresh ? '【她刚发了昨晚的睡眠截图】' : '【她最近的睡眠】';
-    const block = [
-      head,
-      ...sleepCtx.lines,
-      sleepCtx.fresh ? '（这些数字你已经知道了，不要再问她睡得怎么样、睡了多久。）' : '',
-    ]
-      .filter(Boolean)
-      .join('\n');
-    contextBlock = contextBlock ? `${contextBlock}\n\n${block}` : block;
-  }
-
-  /*
-   * 他自己去查的数据（步数 / 喝水 / 经期 / 每日状态）。
-   *
-   * 这几样她说过"平时我自己记就好，他想看的时候再问系统要"，
-   * 所以不常驻上下文，而是让他用工具真的去查 —— 这样他不会凭印象编数字。
-   * 只有她的话沾到这些话题时才跑这一趟，免得每轮都多一次调用。
-   */
-  const toolPass = await runToolPass([
-    ...history.map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content }) as const),
-    // 关键：必须把**当前这句**带上，否则工具路由看的是上一轮的话
-    { role: 'user' as const, content: text },
-  ]).catch(() => ({ block: '', used: [] as string[] }));
+  const toolPass = await runToolPass(
+    [
+      ...history.map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content }) as const),
+      // 关键：必须把**当前这句**带上，否则工具路由看的是上一轮的话
+      { role: 'user' as const, content: text },
+    ],
+    doorbell.block,
+  ).catch(() => ({ block: '', used: [] as string[] }));
   if (toolPass.block) {
     contextBlock = contextBlock ? `${contextBlock}\n\n${toolPass.block}` : toolPass.block;
     log.info('他查了数据', { tools: toolPass.used });
@@ -272,9 +247,19 @@ async function finalizeTurn(
     ...(reasoning && reasoning.trim() ? { reasoning: reasoning.trim() } : {}),
   });
 
-  void compressOutOfWindow(turn.sessionId).catch((err) =>
-    log.error('后台压缩失败（不影响本轮对话）', errFields(err)),
-  );
+  /*
+   * 不再自动压缩成摘要。
+   *
+   * 原来每轮收尾都会跑 compressOutOfWindow，把对话压成第三人称摘要
+   * （「林遇…江瑜…」），于是他的上下文里全是"不像自己说的话"。
+   * 林遇定的规矩是：**他的大脑他来做主** —— 记什么、记成摘要还是保原句，
+   * 由他自己用 save_memory 决定；每晚醒来时系统提醒他记当天的。
+   *
+   * 想恢复自动压缩，把下面两行取消注释即可（代码还在）。
+   */
+  // void compressOutOfWindow(turn.sessionId).catch((err) =>
+  //   log.error('后台压缩失败（不影响本轮对话）', errFields(err)),
+  // );
 
   void processTurnSignals(turn.text, reply).catch((err) =>
     log.error('欲望信号处理失败（不影响本轮对话）', errFields(err)),
@@ -282,9 +267,10 @@ async function finalizeTurn(
 
   if (turn.endSession) {
     await closeSession(turn.sessionId);
-    void compressWholeSession(turn.sessionId).catch((err) =>
-      log.error('会话收尾压缩失败', errFields(err)),
-    );
+    // 同样不自动压缩：这一天的记忆，等他自己决定要不要写、怎么写
+    // void compressWholeSession(turn.sessionId).catch((err) =>
+    //   log.error('会话收尾压缩失败', errFields(err)),
+    // );
   }
 
   const result: ChatResponse = {

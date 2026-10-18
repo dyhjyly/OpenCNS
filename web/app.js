@@ -1483,9 +1483,10 @@ async function pageMemory() {
 /* ─────────── 工具（入口页） ─────────── */
 const TOOL_ITEMS = [
   { id: 'mind', label: '心境', desc: '他此刻的欲望与底色', em: '◈' },
+  { id: 'review', label: '记忆整理', desc: '筛掉没必要的 · 补上时间', em: '✎' },
   { id: 'usage', label: '记账', desc: '余额 · 用量 · 趋势', em: '¥' },
   { id: 'status', label: '系统状态', desc: '数据库 · 向量 · 闸门 · 任务', em: '◎' },
-  { id: 'sleep', label: '睡眠', desc: '手环截图 → 记录 → 趋势', em: '☾' },
+  { id: 'sleep', label: '睡眠', desc: '手动记 · 他要用工具查', em: '☾' },
   { id: 'health', label: '身体', desc: '步数 · 消耗 · 喝水（留两周）', em: '❤' },
   { id: 'calendar', label: '日历', desc: '每日状态 · 经期', em: '▦' },
   { id: 'games', label: '游戏', desc: '还没想好', em: '✧', soon: true },
@@ -1520,6 +1521,7 @@ function bindToolBack() {
 
 async function pageTool(id) {
   if (id === 'mind') return pageToolMind();
+  if (id === 'review') return pageToolReview();
   if (id === 'usage') return pageToolUsage();
   if (id === 'status') return pageToolStatus();
   if (id === 'sleep') return pageToolSleep();
@@ -1529,6 +1531,134 @@ async function pageTool(id) {
   $('#main').innerHTML = `${toolBackRow(t ? t.label : '')}
     <div class="soon"><span class="em">${t ? t.em : '✧'}</span><p>这个模块还没做。</p></div>`;
   bindToolBack();
+}
+
+/* ─────────── 工具 · 记忆整理 ─────────── */
+const KIND_LABEL = {
+  episode: '一段对话',
+  semantic: '一件事',
+  experience: '他的经历',
+  reflection: '他的想法',
+  pinned: '底座',
+};
+
+async function pageToolReview(filter = 'no_time', offset = 0) {
+  const main = $('#main');
+  main.innerHTML = `${toolBackRow('记忆整理')}<div class="empty">读取中…</div>`;
+  bindToolBack();
+
+  let d;
+  try {
+    d = await api(`/memory/review?filter=${filter}&limit=20&offset=${offset}`);
+  } catch (err) {
+    main.innerHTML = `${toolBackRow('记忆整理')}<div class="empty">读不到（${esc(err.message)}）</div>`;
+    bindToolBack();
+    return;
+  }
+
+  const st = d.stats;
+  const items = d.items;
+
+  main.innerHTML = `${toolBackRow('记忆整理')}
+    <section class="card ornate">
+      <div class="card-title">现状</div>
+      <div class="usage-row" style="margin-top:0">
+        <span>共 ${st.total} 条</span>
+        <span>没日期 ${st.noTime}</span>
+        <span>第三人称 ${st.thirdPerson}</span>
+      </div>
+      <p class="mind-note">
+        没日期的记忆被召回时会混进当前对话 —— 因为它说不清"这是什么时候的事"。
+        下面一条条看：没必要的删，有必要留的补上日期。
+      </p>
+      <div class="rv-tabs">
+        ${[['no_time', '没日期的'], ['third_person', '第三人称摘要'], ['all', '全部']].map(([k, label]) =>
+          `<button class="mini ${filter === k ? '' : 'ghost'}" data-filter="${k}">${label}</button>`).join('')}
+      </div>
+    </section>
+
+    <section class="card ornate">
+      <div class="card-title">来源分布<span class="caps">可以整批删</span></div>
+      ${st.bySource.map((s) => `
+        <div class="row">
+          <span class="k" style="font-size:13px">${esc(s.source)}</span>
+          <span class="v">${s.n} 条
+            ${['compressor', 'ltm_v13'].includes(s.source)
+              ? `<button class="mini ghost" data-bulk="${esc(s.source)}" style="margin-left:8px">全删</button>`
+              : ''}
+          </span>
+        </div>`).join('')}
+    </section>
+
+    <section class="card ornate">
+      <div class="card-title">一条一条看<span class="caps">${items.length} 条</span></div>
+      ${items.length === 0 ? '<div class="empty">这个筛选下没有了</div>' : items.map((m) => `
+        <div class="rv-item" data-id="${m.id}">
+          <div class="rv-top">
+            <span class="rv-when ${m.eventTime ? '' : 'bad'}">${m.eventTime ? String(m.eventTime).slice(0, 10) : '没有日期'}</span>
+            <span class="rv-kind">${KIND_LABEL[m.kind] || m.kind}</span>
+            <span class="rv-src">${esc(m.source)}</span>
+            ${m.thirdPerson ? '<span class="rv-flag">第三人称</span>' : ''}
+          </div>
+          <div class="rv-body">${esc(m.content)}</div>
+          <div class="rv-acts">
+            <button class="mini" data-time="${m.id}">补日期</button>
+            <button class="mini ghost" data-del="${m.id}">删掉</button>
+          </div>
+        </div>`).join('')}
+      <div class="rv-more">
+        ${offset > 0 ? `<button class="mini ghost" id="rvPrev">上一页</button>` : ''}
+        ${items.length === 20 ? `<button class="mini" id="rvNext" style="margin-left:8px">下一页</button>` : ''}
+      </div>
+    </section>
+  `;
+  bindToolBack();
+
+  main.querySelectorAll('[data-filter]').forEach((b) =>
+    b.addEventListener('click', () => pageToolReview(b.dataset.filter, 0)));
+
+  const prev = $('#rvPrev');
+  if (prev) prev.addEventListener('click', () => pageToolReview(filter, Math.max(0, offset - 20)));
+  const next = $('#rvNext');
+  if (next) next.addEventListener('click', () => pageToolReview(filter, offset + 20));
+
+  main.querySelectorAll('[data-time]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      const day = prompt('这条是哪一天的事？（YYYY-MM-DD）', String(new Date().toISOString().slice(0, 10)));
+      if (!day) return;
+      try {
+        await api(`/memory/review/${b.dataset.time}/time`, {
+          method: 'POST',
+          body: JSON.stringify({ eventTime: day }),
+        });
+        toast('补上了', 1200);
+        pageToolReview(filter, offset);
+      } catch (err) { toast('失败：' + err.message, 2400); }
+    }));
+
+  main.querySelectorAll('[data-del]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      if (!confirm('删掉这条？删了就不再出现在回忆里。')) return;
+      try {
+        await api(`/memory/review/${b.dataset.del}`, { method: 'DELETE' });
+        toast('删了', 1000);
+        pageToolReview(filter, offset);
+      } catch (err) { toast('失败：' + err.message, 2400); }
+    }));
+
+  main.querySelectorAll('[data-bulk]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      const src = b.dataset.bulk;
+      if (!confirm(`把来源「${src}」的记忆全部删掉？这个不能撤销。`)) return;
+      try {
+        const r = await api('/memory/review/bulk-delete', {
+          method: 'POST',
+          body: JSON.stringify({ source: src }),
+        });
+        toast(`删了 ${r.deleted} 条`, 2000);
+        pageToolReview(filter, 0);
+      } catch (err) { toast('失败：' + err.message, 2400); }
+    }));
 }
 
 /* ─────────── 工具 · 心境 ─────────── */

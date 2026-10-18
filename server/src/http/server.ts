@@ -629,6 +629,59 @@ export function startHttpServer(): Server {
     }
   });
 
+  /* ─── 记忆整理 ─── */
+  app.get('/memory/review', requireToken, async (req, res) => {
+    try {
+      const { listForReview, reviewStats } = await import('../memory/review.js');
+      const filter = ['no_time', 'third_person', 'all'].includes(String(req.query.filter))
+        ? (String(req.query.filter) as 'no_time' | 'third_person' | 'all')
+        : 'no_time';
+      const limit = Math.min(100, Math.max(1, Number(req.query.limit ?? 20)));
+      const offset = Math.max(0, Number(req.query.offset ?? 0));
+      return res.json({
+        ok: true,
+        filter,
+        items: await listForReview({ filter, limit, offset }),
+        stats: await reviewStats(),
+      });
+    } catch (err) {
+      log.error('读记忆整理失败', errFields(err));
+      return res.status(500).json(errFields(err));
+    }
+  });
+
+  app.post('/memory/review/:id/time', requireToken, async (req, res) => {
+    try {
+      const { setMemoryTime } = await import('../memory/review.js');
+      const day = String((req.body as { eventTime?: string })?.eventTime ?? '');
+      const ok = await setMemoryTime(String(req.params.id), day);
+      return res.json({ ok });
+    } catch (err) {
+      return res.status(500).json(errFields(err));
+    }
+  });
+
+  app.delete('/memory/review/:id', requireToken, async (req, res) => {
+    try {
+      const { deleteMemory } = await import('../memory/review.js');
+      return res.json({ ok: await deleteMemory(String(req.params.id)) });
+    } catch (err) {
+      return res.status(500).json(errFields(err));
+    }
+  });
+
+  app.post('/memory/review/bulk-delete', requireToken, async (req, res) => {
+    try {
+      const { deleteBySource } = await import('../memory/review.js');
+      const source = String((req.body as { source?: string })?.source ?? '');
+      if (!source) return res.status(400).json({ error: 'source_required' });
+      const n = await deleteBySource(source);
+      return res.json({ ok: true, deleted: n });
+    } catch (err) {
+      return res.status(500).json(errFields(err));
+    }
+  });
+
   app.get('/memory/starmap', requireToken, async (_req, res) => {
     try {
       const { getStarMap } = await import('../memory/starmap.js');

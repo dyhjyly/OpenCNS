@@ -126,7 +126,8 @@ export function buildIdentityPrompt(actors: ActorNames): string {
 export interface ContextBlockInput {
   /** 现在几点、隔了多久（time/clock.ts 生成） */
   now?: string[];
-  recalled: RecallCandidate[];
+  /** 门铃：只有关键词和编号，没有内容（memory/doorbell.ts 生成） */
+  doorbell?: string;
   /** 时间树（周摘要 / 月档案） */
   timeline?: string[];
   /** 此刻的欲望底色 */
@@ -146,16 +147,11 @@ export function buildContextBlock(input: ContextBlockInput): string {
     parts.push('【最近这些天】', ...input.timeline.map((t) => `· ${t}`), '');
   }
 
-  if (input.recalled.length > 0) {
-    parts.push('【你想起的事】');
-    for (const item of input.recalled) {
-      const when = item.event_time
-        ? new Date(item.event_time).toISOString().slice(0, 10)
-        : '时间记不清了';
-      const tag = item.kind === 'episode' ? '回忆' : '你知道的事';
-      parts.push(`· [${when} · ${tag}] ${item.content}`);
-    }
-    parts.push('');
+  // 记忆不再往这里塞内容。
+  // 林遇的原话："只需要一个门铃提醒就好了"——给关键词和编号，让他自己决定翻不翻。
+  // 塞内容的结果是：那些第三人称的老摘要混进他的语气里，他连"哪些是我说的"都分不清。
+  if (input.doorbell && input.doorbell.length > 0) {
+    parts.push(input.doorbell, '');
   }
 
   if (input.driveHints && input.driveHints.length > 0) {
