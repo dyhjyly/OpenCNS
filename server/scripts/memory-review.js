@@ -132,10 +132,12 @@ async function doImport() {
   let toDate = 0;
   let toEdit = 0;
   const problems = [];
+  const seen = new Set();
 
   for (const r of rows) {
     const id = (r[idx.id] ?? '').trim();
     if (!id) continue;
+    seen.add(id);
 
     const keep = String(r[idx.keep] ?? '1').trim().toLowerCase();
     const date = (r[idx.date] ?? '').trim();
@@ -180,8 +182,39 @@ async function doImport() {
     }
   }
 
+  /*
+   * --sync：文件里**没有**的，按删除处理。
+   *
+   * 为什么要它：在 Excel 里直接删行比把 keep 改成 0 顺手得多，
+   * 但删掉的行不会出现在文件里，导入时无从知道"这条被删了"。
+   * 所以用"导出时的全集 - 文件里剩下的" = 要删的。
+   */
+  let toSyncPrune = 0;
+  if (args.sync) {
+    const living = await many(
+      `select id::text from memory_items
+        where state = 'active' and pinned = false`,
+    );
+    const missing = living.filter((x) => !seen.has(x.id));
+    // 安全阀：如果文件小得离谱，多半是导错了文件，不干
+    if (living.length > 0 && seen.size < living.length * 0.1) {
+      console.log(`  !! 文件里只有 ${seen.size} 条，库里活着 ${living.length} 条，差太多，拒绝同步。`);
+      console.log('     请确认导出的是全部（export 不带 --filter）。');
+      return;
+    }
+    toSyncPrune = missing.length;
+    if (!isDry && args.yes) {
+      for (const m of missing) {
+        await query(`update memory_items set state = 'pruned' where id = $1 and pinned = false`, [m.id]);
+      }
+    }
+  }
+
   console.log(`  规则：${rows.length} 行`);
   console.log(`  要删：${toPrune}   补日期：${toDate}   改正文：${toEdit}`);
+  if (args.sync) {
+    console.log(`  同步删（文件里没有的）：${toSyncPrune}`);
+  }
   if (problems.length) {
     console.log('  有问题的那几行：');
     for (const p of problems.slice(0, 10)) console.log(`    · ${p}`);
