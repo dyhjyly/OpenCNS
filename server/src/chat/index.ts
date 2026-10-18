@@ -1,6 +1,7 @@
 import type { Response } from 'express';
 
 import { log, errFields } from '../logger.js';
+import { many } from '../db/pool.js';
 import { chatText, chatTextStream, type ChatMessage, type ContentPart } from '../llm/client.js';
 import { readTextUpload, readUpload } from './uploads.js';
 import { recentPats } from '../social/moments.js';
@@ -66,6 +67,46 @@ export interface ChatResponse {
 
 const HISTORY_WINDOW = 20;
 
+/** 上下文带多少天的对话（开新窗也要有熟悉感） */
+const CONTEXT_DAYS = 5;
+/** 字数上限。中文约 1 字 ≈ 0.7 token，120,000 字 ≈ 8 万 tokens，离 100 万还很远 */
+const CONTEXT_MAX_CHARS = 120_000;
+
+/**
+ * 取这一轮要带进上下文的原文。
+ *
+ * 两条腿：
+ *   1. 当前会话的全部（同一场对话不该断）
+ *   2. 最近 5 天里其它会话的消息（开新窗也认得前面）
+ * 从最近往回取，超字数预算就停。
+ */
+async function loadContextHistory(sessionId: string): Promise<{ role: 'user' | 'assistant'; content: string }[]> {
+  const rows = await many<{ role: string; content: string }>(
+    `select role, content
+       from messages
+      where session_id = $1::uuid
+         or event_time > now() - ($2 || ' days')::interval
+      order by seq asc`,
+    [sessionId, String(CONTEXT_DAYS)],
+  ).catch(() => []);
+
+  // 当前这句在 prepareTurn 里已经写进库了，去掉
+  if (rows.length > 0) rows.pop();
+
+  const picked: { role: string; content: string }[] = [];
+  let chars = 0;
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const r = rows[i]!;
+    if (picked.length > 0 && chars + r.content.length > CONTEXT_MAX_CHARS) break;
+    picked.push(r);
+    chars += r.content.length;
+  }
+  picked.reverse();
+
+  log.info('上下文窗口', { messages: picked.length, chars, days: CONTEXT_DAYS });
+  return picked.map((r) => ({ role: r.role === 'assistant' ? ('assistant' as const) : ('user' as const), content: r.content }));
+}
+
 interface PreparedTurn {
   startedAt: number;
   text: string;
@@ -98,9 +139,17 @@ async function prepareTurn(req: ChatRequest): Promise<PreparedTurn> {
   const rec = await recall(text);
   const recallMs = Date.now() - tRecall;
 
-  // 近处原文（窗口内保持完整原文，远处才压缩成回忆）
-  const recent = await recentMessages(sessionId, HISTORY_WINDOW + 1);
-  const history = recent.slice(0, -1); // 去掉刚插入的当前这句
+  /*
+   * 近处原文。
+   *
+   * 原来是硬编码 20 条（HISTORY_WINDOW），一场长对话超过 20 条就开始丢前面的 ——
+   * "聊着聊着忘了刚才说过什么"就是这个原因，不是上下文满了。
+   *
+   * 实测：模型上下文 1,048,576 tokens，我们现在每轮才用 4,535（0.43%）。
+   * 所以放开：**当前会话的全部 + 最近 5 天的所有对话**，按字数封顶，
+   * 保证开新窗也有熟悉感。
+   */
+  const history = await loadContextHistory(sessionId);
 
   // 人格底座：他自己写下的相处模式，每一轮都在（不是记忆，是他）
   const persona = await renderPersona().catch(() => '');

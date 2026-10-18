@@ -155,6 +155,88 @@ export async function syncFoundationalEvents(): Promise<number> {
   return rows.length;
 }
 
+/**
+ * 补建漏掉的周/月。
+ *
+ * 原来只建"上一个"周期：服务停过、任务失败一次，那一段就永远缺了。
+ * 现在往回翻，把缺的都补上；连续 3 个空周期就停（更早的本来也没东西）。
+ *
+ * 每层只压一次，且**都直接从日记忆压**，不是压上一层的摘要 ——
+ * 避免"摘要的摘要"一层层失真。
+ */
+export async function backfillMissing(weeksBack = 10, monthsBack = 6): Promise<{ weeks: number; months: number }> {
+  let weeks = 0;
+  let months = 0;
+
+  // 周：从上一个自然周往回数
+  let empty = 0;
+  for (let i = 1; i <= weeksBack; i++) {
+    const bounds = await one<{ start: string; end: string; label: string }>(
+      `select (date_trunc('week', (now() at time zone 'Asia/Shanghai')) - ($1 || ' weeks')::interval)::date::text as start,
+              (date_trunc('week', (now() at time zone 'Asia/Shanghai')) - ($1 || ' weeks')::interval + interval '6 days')::date::text as end,
+              to_char(date_trunc('week', (now() at time zone 'Asia/Shanghai')) - ($1 || ' weeks')::interval, 'YYYY-MM-DD')
+                || ' ~ ' ||
+              to_char(date_trunc('week', (now() at time zone 'Asia/Shanghai')) - ($1 || ' weeks')::interval + interval '6 days', 'YYYY-MM-DD') as label`,
+      [String(i)],
+    );
+    if (!bounds) continue;
+
+    const exists = await one<{ id: string }>(
+      `select id::text from timeline_periods where kind = 'week' and period_start = $1::date`,
+      [bounds.start],
+    );
+    if (exists) { empty = 0; continue; }
+
+    const nextDay = new Date(new Date(`${bounds.end}T00:00:00+08:00`).getTime() + 86_400_000).toISOString().slice(0, 10);
+    const memories = await fetchMemoriesInRange(bounds.start, nextDay);
+    if (memories.length === 0) {
+      empty++;
+      if (empty >= 3) break;
+      continue;
+    }
+    empty = 0;
+    const content = await summarize(`这一周（${bounds.label}）`, memories);
+    if (!content) continue;
+    await writePeriod('week', bounds.start, bounds.end, content, new Date().toISOString());
+    weeks++;
+    log.info('补建了周回顾', { label: bounds.label, memories: memories.length });
+  }
+
+  // 月：从上一个自然月往回数
+  empty = 0;
+  for (let i = 1; i <= monthsBack; i++) {
+    const bounds = await one<{ start: string; end: string; label: string }>(
+      `select (date_trunc('month', (now() at time zone 'Asia/Shanghai')) - ($1 || ' months')::interval)::date::text as start,
+              (date_trunc('month', (now() at time zone 'Asia/Shanghai')) - ($1 || ' months')::interval + interval '1 month' - interval '1 day')::date::text as end,
+              to_char(date_trunc('month', (now() at time zone 'Asia/Shanghai')) - ($1 || ' months')::interval, 'YYYY年MM月') as label`,
+      [String(i)],
+    );
+    if (!bounds) continue;
+
+    const exists = await one<{ id: string }>(
+      `select id::text from timeline_periods where kind = 'month' and period_start = $1::date`,
+      [bounds.start],
+    );
+    if (exists) { empty = 0; continue; }
+
+    const nextDay = new Date(new Date(`${bounds.end}T00:00:00+08:00`).getTime() + 86_400_000).toISOString().slice(0, 10);
+    const memories = await fetchMemoriesInRange(bounds.start, nextDay);
+    if (memories.length === 0) {
+      empty++;
+      if (empty >= 3) break;
+      continue;
+    }
+    empty = 0;
+    const content = await summarize(`这个月（${bounds.label}）`, memories);
+    if (!content) continue;
+    await writePeriod('month', bounds.start, bounds.end, content, new Date().toISOString());
+    months++;
+    log.info('补建了月档案', { label: bounds.label, memories: memories.length });
+  }
+
+  return { weeks, months };
+}
+
 export async function runTimelineBuild(): Promise<void> {
   try {
     await buildPreviousWeek();
@@ -165,6 +247,12 @@ export async function runTimelineBuild(): Promise<void> {
     await buildPreviousMonth();
   } catch (err) {
     log.error('月档案生成失败', errFields(err));
+  }
+  try {
+    const filled = await backfillMissing();
+    if (filled.weeks || filled.months) log.info('补齐了漏掉的周期', filled);
+  } catch (err) {
+    log.error('补建周期失败', errFields(err));
   }
   try {
     await syncFoundationalEvents();
