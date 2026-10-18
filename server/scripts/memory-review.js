@@ -113,17 +113,86 @@ async function doExport() {
   console.log('  说明：keep 改成 0 就是删掉；date 填 YYYY-MM-DD 就补日期；content 想改就改。');
 }
 
+/**
+ * 读文件 -> 记录数组。
+ *
+ * 为什么不用标准 CSV 解析：Excel 存出来的文件有三个坑（都实测踩过）
+ *   1. 中文 Windows 上 "CSV (逗号分隔)" 是 **GBK**
+ *   2. 日期被改成 2026/6/22
+ *   3. content 里带英文双引号时，整个文件的引号配对会错乱 ——
+ *      按标准 CSV 解析会把后面几十行吞进同一个字段
+ *
+ * 所以这里**以"行首是 uuid"作为记录分界**，再按前 5 个逗号切列
+ * （content 是最后一列，里面的逗号/换行都算正文）。
+ */
+function readRecords(buf) {
+  let text;
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(buf);
+  } catch {
+    text = new TextDecoder('gbk').decode(buf);
+  }
+  text = text.replace(/^\uFEFF/, '');
+
+  const lines = text.split(/\r?\n/);
+  const recs = [];
+  let cur = null;
+  for (const line of lines) {
+    if (/^\s*id\s*,\s*keep/i.test(line)) continue; // 表头
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12},/i.test(line)) {
+      if (cur) recs.push(cur);
+      cur = [line];
+    } else if (cur) {
+      cur.push(line);
+    }
+  }
+  if (cur) recs.push(cur);
+
+  return recs.map((rec) => {
+    const first = rec[0];
+    const parts = [];
+    let rest = first;
+    for (let i = 0; i < 5; i++) {
+      const at = rest.indexOf(',');
+      if (at < 0) break;
+      parts.push(rest.slice(0, at));
+      rest = rest.slice(at + 1);
+    }
+    parts.push(rest);
+
+    let content = parts.slice(5).join(',');
+    if (rec.length > 1) content += `\n${rec.slice(1).join('\n')}`;
+    content = content.replace(/^"/, '').replace(/"(?:\s*)$/, '').replace(/""/g, '"');
+
+    return {
+      id: (parts[0] ?? '').trim(),
+      keep: (parts[1] ?? '1').trim(),
+      date: normDate(parts[2]),
+      kind: (parts[3] ?? '').trim(),
+      source: (parts[4] ?? '').trim(),
+      content,
+    };
+  });
+}
+
+/** 2026/6/22 · 2026-6-22 · 2026.6.22 · 2026年6月22日 -> 2026-06-22 */
+function normDate(v) {
+  const s = String(v ?? '').trim();
+  if (!s) return '';
+  const m = /^(\d{4})\s*[-/.年]\s*(\d{1,2})\s*[-/.月]\s*(\d{1,2})/.exec(s);
+  if (!m) return s;
+  return `${m[1]}-${String(m[2]).padStart(2, '0')}-${String(m[3]).padStart(2, '0')}`;
+}
+
 async function doImport() {
   const file = positional[0];
   if (!file || !fs.existsSync(file)) {
-    console.log('  用法：import <csv 路径> [--dry] [--yes]');
+    console.log('  用法：import <csv 路径> [--dry] [--yes] [--sync]');
     return;
   }
-  const rows = parseCsv(fs.readFileSync(file, 'utf8'));
-  const head = rows.shift();
-  const idx = Object.fromEntries(head.map((h, i) => [String(h).trim().toLowerCase(), i]));
-  if (idx.id === undefined) {
-    console.log('  表头里没有 id 列，看不懂这个文件');
+  const rows = readRecords(fs.readFileSync(file));
+  if (rows.length === 0) {
+    console.log('  这个文件里没读出任何记录');
     return;
   }
 
@@ -135,13 +204,13 @@ async function doImport() {
   const seen = new Set();
 
   for (const r of rows) {
-    const id = (r[idx.id] ?? '').trim();
+    const id = r.id;
     if (!id) continue;
     seen.add(id);
 
-    const keep = String(r[idx.keep] ?? '1').trim().toLowerCase();
-    const date = (r[idx.date] ?? '').trim();
-    const content = r[idx.content] ?? '';
+    const keep = String(r.keep ?? '1').trim().toLowerCase();
+    const date = r.date;
+    const content = r.content;
 
     const cur = await many(
       `select id::text, content, event_time from memory_items where id = $1`,
@@ -158,8 +227,7 @@ async function doImport() {
       continue;
     }
 
-    if (date && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
-      const curDate = ymd(row.event_time);
+    if (date && /^\d{4}-\d{2}-\d{2}$/.test(date)) {      const curDate = ymd(row.event_time);
       if (curDate !== date) {
         if (!isDry) {
           await query(
