@@ -24,19 +24,45 @@ export interface SaveMemoryInput {
 
 const KINDS = new Set(['episode', 'semantic', 'experience', 'reflection']);
 
+/** 去掉控制字符：它们会让 jsonb 参数直接报 invalid input syntax */
+function clean(s: unknown): string {
+  return String(s ?? '')
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '')
+    .trim();
+}
+
+function safeJson(v: unknown, fallback = '[]'): string {
+  try {
+    const out = JSON.stringify(v ?? []);
+    return typeof out === 'string' ? out : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 function vectorLiteral(v: number[]): string {
   return `[${v.join(',')}]`;
 }
 
 export async function saveMemory(input: SaveMemoryInput): Promise<string> {
   const kind = KINDS.has(input.kind) ? input.kind : 'semantic';
-  const content = String(input.content ?? '').trim();
+  const content = clean(input.content);
   if (!content) return '没写成：content 不能为空。';
 
-  const quotes = (input.quotes ?? [])
-    .map((q) => ({ who: q.who === 'self' ? 'self' : 'human', text: String(q.text ?? '').trim() }))
+  // 模型偶尔会把 quotes 给成字符串数组或对象，这里都兜住
+  const rawQuotes = Array.isArray(input.quotes)
+    ? input.quotes
+    : typeof input.quotes === 'string'
+      ? [{ text: input.quotes }]
+      : [];
+  const quotes = (rawQuotes as unknown[])
+    .map((q) => {
+      if (typeof q === 'string') return { who: 'human', text: clean(q) };
+      const o = (q ?? {}) as { who?: unknown; text?: unknown };
+      return { who: o.who === 'self' ? 'self' : 'human', text: clean(o.text) };
+    })
     .filter((q) => q.text.length > 0);
-  const causal = (input.causal ?? '').trim();
+  const causal = clean(input.causal);
 
   // 数据库的约束，先在应用层挡掉，并把"怎么改"说给他听
   if (kind === 'episode') {
@@ -74,13 +100,13 @@ export async function saveMemory(input: SaveMemoryInput): Promise<string> {
       [
         kind,
         content,
-        JSON.stringify(quotes),
+        safeJson(quotes),
         causal || null,
         eventTime,
         eventTime ? 'exact' : 'unknown',
         Math.min(1, Math.max(0.1, input.importance ?? 0.5)),
         embedding,
-        JSON.stringify({ source: 'self', via: 'save_memory' }),
+        safeJson({ source: 'self', via: 'save_memory' }, '{}'),
       ],
     );
     if (!row) return '没写成：数据库没返回 id。';
