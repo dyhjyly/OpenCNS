@@ -5,6 +5,7 @@ import { chatText, chatTextStream, type ChatMessage, type ContentPart } from '..
 import { readTextUpload, readUpload } from './uploads.js';
 import { recentPats } from '../social/moments.js';
 import { buildDoorbell } from '../memory/doorbell.js';
+import { renderPersona } from '../persona/index.js';
 import { runToolPass } from './tools.js';
 import { buildDriveHints } from '../drives/render.js';
 import { processTurnSignals } from '../drives/signals.js';
@@ -101,7 +102,12 @@ async function prepareTurn(req: ChatRequest): Promise<PreparedTurn> {
   const recent = await recentMessages(sessionId, HISTORY_WINDOW + 1);
   const history = recent.slice(0, -1); // 去掉刚插入的当前这句
 
-  const messages: ChatMessage[] = [{ role: 'system', content: buildIdentityPrompt(actors) }];
+  // 人格底座：他自己写下的相处模式，每一轮都在（不是记忆，是他）
+  const persona = await renderPersona().catch(() => '');
+  const systemPrompt = persona
+    ? `${buildIdentityPrompt(actors)}\n\n${persona}`
+    : buildIdentityPrompt(actors);
+  const messages: ChatMessage[] = [{ role: 'system', content: systemPrompt }];
   const [timeline, driveHints, nowSnapshot] = await Promise.all([
     getTimelineLines().catch(() => [] as string[]),
     buildDriveHints().catch(() => [] as string[]),

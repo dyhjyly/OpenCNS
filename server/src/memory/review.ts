@@ -133,10 +133,12 @@ export async function setMemoryTime(id: string, eventTime: string): Promise<bool
   return Boolean(row);
 }
 
-/** 删掉（软删：state 变成 deleted，召回和星图都不再出现） */
+/** 删掉（软删：state 变成 pruned，召回和星图都不再出现） */
 export async function deleteMemory(id: string): Promise<boolean> {
+  // 注意：state 的 CHECK 只允许 active / archived / compressed_into /
+  // merged_into / superseded / pruned —— 之前写 deleted 会直接报错
   const row = await one<{ id: string }>(
-    `update memory_items set state = 'deleted' where id = $1::uuid and pinned = false returning id::text`,
+    `update memory_items set state = 'pruned' where id = $1::uuid and pinned = false returning id::text`,
     [id],
   );
   return Boolean(row);
@@ -145,11 +147,23 @@ export async function deleteMemory(id: string): Promise<boolean> {
 /** 批量删：按来源（比如把 compressor 生成的第三人称摘要一次性清掉） */
 export async function deleteBySource(source: string): Promise<number> {
   const rows = await many<{ id: string }>(
-    `update memory_items set state = 'deleted'
+    `update memory_items set state = 'pruned'
       where state = 'active' and pinned = false and provenance->>'source' = $1
       returning id::text`,
     [source],
   );
   log.info('批量删记忆', { source, count: rows.length });
+  return rows.length;
+}
+
+/** 批量删：按 kind（比如把所有 reflection 清掉） */
+export async function deleteByKind(kind: string): Promise<number> {
+  const rows = await many<{ id: string }>(
+    `update memory_items set state = 'pruned'
+      where state = 'active' and pinned = false and kind = $1
+      returning id::text`,
+    [kind],
+  );
+  log.info('批量删记忆（按类型）', { kind, count: rows.length });
   return rows.length;
 }
