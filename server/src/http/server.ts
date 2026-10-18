@@ -6,6 +6,7 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import { config } from '../config.js';
 import { assertDatabaseReady, many, one, query } from '../db/pool.js';
 import { jobStatus } from '../jobs/runner.js';
+import { login, logout, check, status } from '../auth/session.js';
 import { log, errFields } from '../logger.js';
 
 /**
@@ -66,6 +67,18 @@ export function startHttpServer(): Server {
       next();
     });
   }
+
+  /*
+   * 登录态。这几个**不需要 requireToken** —— 它们本身就是拿身份的地方。
+   *
+   * 从 HTTP Basic 换成 cookie 的原因：装到桌面（PWA standalone）之后，
+   * Chrome 经常不再带 Basic 凭据，整站 401，表现就是"前端连不上后端"。
+   * 现在由 nginx 的 auth_request 调 /auth/check 判断，cookie 一直有效。
+   */
+  app.post('/auth/login', (req, res) => login(req, res));
+  app.post('/auth/logout', (req, res) => logout(req, res));
+  app.get('/auth/check', (req, res) => check(req, res));
+  app.get('/auth/status', (req, res) => status(req, res));
 
   app.get('/health', async (_req, res) => {
     try {

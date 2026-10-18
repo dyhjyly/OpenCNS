@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#FAF5EF" />
+<title>进来</title>
+<style>
+  :root {
+    --bg: #FAF5EF; --card: #FFFDFA; --text: #4A3B3F; --muted: #9A8A8E;
+    --accent: #C89993; --line: #E8DDD6;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent }
+  html, body { height: 100%; margin: 0 }
+  body {
+    background: radial-gradient(120% 80% at 50% 0%, #F3E4DE 0%, var(--bg) 55%);
+    color: var(--text);
+    font-family: -apple-system, "PingFang SC", "Noto Sans CJK SC", sans-serif;
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px;
+  }
+  .box { width: 100%; max-width: 340px; text-align: center }
+  .names {
+    font-family: Georgia, "Times New Roman", serif; font-style: italic;
+    font-size: 44px; color: #5C3A42; letter-spacing: .01em; margin: 0 0 6px;
+  }
+  .names .amp { color: var(--accent); font-size: 30px; padding: 0 4px }
+  .sub { font-size: 12px; color: var(--muted); letter-spacing: .18em; margin-bottom: 34px }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 18px;
+    padding: 22px 20px; box-shadow: 0 10px 40px rgba(92, 58, 66, .07);
+  }
+  input[type="password"] {
+    width: 100%; padding: 14px 16px; font-size: 16px;
+    border: 1px solid var(--line); border-radius: 12px;
+    background: #FDFBF9; color: var(--text); outline: none;
+    font-family: inherit; letter-spacing: .12em;
+  }
+  input[type="password"]:focus { border-color: var(--accent) }
+  button {
+    width: 100%; margin-top: 14px; padding: 14px; font-size: 15px;
+    border: 0; border-radius: 12px; background: var(--accent); color: #fff;
+    font-family: inherit; font-weight: 600; letter-spacing: .08em; cursor: pointer;
+  }
+  button:disabled { opacity: .6 }
+  .msg { margin-top: 12px; font-size: 13px; color: #B4555E; min-height: 18px }
+  .hint { margin-top: 22px; font-size: 11px; color: var(--muted); line-height: 1.7 }
+</style>
+</head>
+<body>
+  <div class="box">
+    <h1 class="names">Jy <span class="amp">&amp;</span> Ly</h1>
+    <div class="sub">WELCOME HOME</div>
+
+    <form class="card" id="form">
+      <input type="password" id="pw" placeholder="密码" autocomplete="current-password" enterkeyhint="go" autofocus />
+      <button id="go" type="submit">进来</button>
+      <div class="msg" id="msg"></div>
+    </form>
+
+    <div class="hint">登录一次就好，装到桌面的那个窗口以后不用再输。</div>
+  </div>
+
+<script>
+  const form = document.getElementById('form');
+  const pw = document.getElementById('pw');
+  const go = document.getElementById('go');
+  const msg = document.getElementById('msg');
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    msg.textContent = '';
+    go.disabled = true;
+    go.textContent = '…';
+    try {
+      const res = await fetch('/v2/api/auth/login', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ password: pw.value }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (res.ok && j.ok) {
+        location.replace('/v2/');
+        return;
+      }
+      msg.textContent = '密码不对';
+      pw.select();
+    } catch (err) {
+      msg.textContent = '连不上，稍后再试';
+    } finally {
+      go.disabled = false;
+      go.textContent = '进来';
+    }
+  });
+</script>
+</body>
+</html>

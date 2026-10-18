@@ -5,7 +5,7 @@
  * 缓存在手机上没有任何好处，只会在她下次打开时看到过期数据。
  */
 
-const CACHE = 'jly-home-v1';
+const CACHE = 'jly-home-v2';
 
 const SHELL = [
   './',
@@ -49,7 +49,9 @@ self.addEventListener('fetch', (e) => {
   e.respondWith(
     fetch(req)
       .then((res) => {
-        if (res && res.ok) {
+        // 不缓存被重定向的响应：未登录时 /v2/ 会 302 到登录页，
+        // 如果把它按 /v2/ 的键存下来，登录之后反而会一直看到登录页
+        if (res && res.ok && !res.redirected && !url.pathname.endsWith('/login')) {
           const copy = res.clone();
           caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
         }
