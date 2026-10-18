@@ -44,11 +44,25 @@ function toast(msg, ms = 2200) {
   toast._t = setTimeout(() => { el.hidden = true; }, ms);
 }
 
+let loginRedirecting = false;
+
 async function api(path, opts = {}) {
   const res = await fetch(`${API}${path}`, {
     ...opts,
+    // cookie 登录：同源请求必须带凭据
+    credentials: 'same-origin',
     headers: { 'content-type': 'application/json', ...(opts.headers || {}) },
   });
+
+  // 登录过期：跳登录页（只跳一次，避免并发请求连环跳）
+  if (res.status === 401) {
+    if (!loginRedirecting) {
+      loginRedirecting = true;
+      location.replace('/v2/login');
+    }
+    throw new Error('需要重新登录');
+  }
+
   if (!res.ok) throw new Error(`${path} → HTTP ${res.status}`);
   return res.json();
 }
