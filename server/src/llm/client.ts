@@ -333,6 +333,9 @@ export async function chatTextStream(
     temperature: opts.temperature ?? 0.8,
     max_tokens: opts.maxTokens ?? DEFAULT_MAX_TOKENS,
     stream: true,
+    // 关键：不带这个，流式响应里就没有 usage —— 只能按字数瞎估，
+    // 缓存命中率永远显示 0（实际可能命中）。
+    stream_options: { include_usage: true },
   };
   if (ep.effort) body.effort = ep.effort;
 
@@ -373,6 +376,8 @@ export async function chatTextStream(
   let buffer = '';
   let full = '';
   let reasoningChars = 0;
+  /** 流式最后一帧会带真实 usage（前提是请求里要 include_usage） */
+  let streamUsage: { prompt_tokens?: number; completion_tokens?: number; prompt_cache_hit_tokens?: number; completion_tokens_details?: { reasoning_tokens?: number } } | null = null;
 
   for (;;) {
     const { done, value } = await reader.read();
@@ -392,7 +397,14 @@ export async function chatTextStream(
         try {
           const json = JSON.parse(payload) as {
             choices?: { delta?: { content?: string; reasoning_content?: string } }[];
+            usage?: {
+              prompt_tokens?: number;
+              completion_tokens?: number;
+              prompt_cache_hit_tokens?: number;
+              completion_tokens_details?: { reasoning_tokens?: number };
+            };
           };
+          if (json.usage) streamUsage = json.usage;
           const delta = json.choices?.[0]?.delta;
           if (delta?.reasoning_content) {
             reasoningChars += delta.reasoning_content.length;
@@ -442,11 +454,12 @@ export async function chatTextStream(
     endpoint: opts.endpoint ?? 'chat',
     model: opts.model ?? ep.model,
     label: ep.label,
-    // 提示词几乎全中文，按 0.95 token/字 估
-    promptTokens: Math.round(promptChars * 0.95),
-    completionTokens: estimateTokens(full),
-    reasoningTokens: Math.round(reasoningChars * 0.95),
-    estimated: true,
+    // 拿到真实 usage 就用真的；拿不到（端点不认 include_usage）才退回字数估算
+    promptTokens: streamUsage?.prompt_tokens ?? Math.round(promptChars * 0.95),
+    completionTokens: streamUsage?.completion_tokens ?? estimateTokens(full),
+    cachedTokens: streamUsage?.prompt_cache_hit_tokens ?? 0,
+    reasoningTokens: streamUsage?.completion_tokens_details?.reasoning_tokens ?? Math.round(reasoningChars * 0.95),
+    estimated: !streamUsage,
     ms: Date.now() - started,
   });
 
