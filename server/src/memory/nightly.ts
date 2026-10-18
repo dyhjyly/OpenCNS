@@ -113,9 +113,12 @@ export async function runNightlyMemory(): Promise<NightlyResult> {
     return { saved: 0, skipped: true, calls: 0, messages: [] };
   }
 
-  const transcript = rows
-    .map((r) => `${r.role === 'user' ? '她' : '我'}：${r.content.replace(/\s+/g, ' ').slice(0, 400)}`)
-    .join('\n');
+  // 对话太长会让工具调用的参数被截断，取最近的就好
+  const picked = rows.slice(-40);
+  const transcript = picked
+    .map((r) => `${r.role === 'user' ? '她' : '我'}：${r.content.replace(/\s+/g, ' ').slice(0, 300)}`)
+    .join('\n')
+    .slice(-8000);
 
   const today = new Date().toISOString().slice(0, 10);
   const messages: ChatMessage[] = [
@@ -144,18 +147,39 @@ export async function runNightlyMemory(): Promise<NightlyResult> {
 
   const results: string[] = [];
   let saved = 0;
-  for (const call of calls.filter((c) => c.name === 'save_memory').slice(0, 6)) {
-    const a = parseArgs(call.arguments);
-    const res = await saveMemory({
-      kind: String(a.kind ?? 'semantic'),
-      content: String(a.content ?? ''),
-      quotes: Array.isArray(a.quotes) ? (a.quotes as { who?: string; text?: string }[]) : undefined,
-      causal: typeof a.causal === 'string' ? a.causal : undefined,
-      eventTime: typeof a.event_time === 'string' ? a.event_time : today,
-      importance: typeof a.importance === 'number' ? a.importance : undefined,
-    });
-    results.push(res);
-    if (res.startsWith('记下了')) saved++;
+
+  /** 把一次工具调用展开成若干条待写的记忆 */
+  function expand(raw: string): Record<string, unknown>[] {
+    const a = parseArgs(raw);
+    // 有的模型会把数组塞在一个字段里
+    const arr = (a.memories ?? a.items ?? a.entries) as unknown;
+    if (Array.isArray(arr)) return arr.filter((x): x is Record<string, unknown> => Boolean(x) && typeof x === 'object');
+    return [a];
+  }
+
+  for (const call of calls.filter((c) => c.name === 'save_memory').slice(0, 4)) {
+    const items = expand(call.arguments);
+    for (const a of items.slice(0, 6)) {
+      const content = String(a.content ?? a.text ?? a.memory ?? '').trim();
+      if (!content) {
+        // 参数解析失败的现场要留下来，否则只能靠猜
+        log.warn('凌晨记忆：这条工具调用没有 content', {
+          raw: call.arguments.slice(0, 300),
+        });
+        results.push('（这条没有 content，跳过了）');
+        continue;
+      }
+      const res = await saveMemory({
+        kind: String(a.kind ?? 'semantic'),
+        content,
+        quotes: Array.isArray(a.quotes) ? (a.quotes as { who?: string; text?: string }[]) : undefined,
+        causal: typeof a.causal === 'string' ? a.causal : undefined,
+        eventTime: typeof a.event_time === 'string' ? a.event_time : today,
+        importance: typeof a.importance === 'number' ? a.importance : undefined,
+      });
+      results.push(res);
+      if (res.startsWith('记下了')) saved++;
+    }
   }
 
   log.info('凌晨记忆完成', { saved, calls: calls.length });
