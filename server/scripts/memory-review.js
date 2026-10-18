@@ -39,6 +39,17 @@ const csvCell = (v) => {
   return s;
 };
 
+/**
+ * Date -> YYYY-MM-DD（按 +08 算）
+ * 踩过：直接 String(date).slice(0,10) 会得到 "Mon Jun 22"。
+ */
+function ymd(v) {
+  if (!v) return '';
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return '';
+  return new Date(d.getTime() + 8 * 3600_000).toISOString().slice(0, 10);
+}
+
 /** 极简 CSV 解析（支持引号、转义、换行） */
 function parseCsv(text) {
   const rows = [];
@@ -88,7 +99,7 @@ async function doExport() {
       [
         r.id,
         '1',
-        r.event_time ? String(r.event_time).slice(0, 10) : '',
+        ymd(r.event_time),
         r.kind,
         r.source,
         csvCell(r.content),
@@ -146,7 +157,7 @@ async function doImport() {
     }
 
     if (date && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
-      const curDate = row.event_time ? String(row.event_time).slice(0, 10) : '';
+      const curDate = ymd(row.event_time);
       if (curDate !== date) {
         if (!isDry) {
           await query(
