@@ -46,7 +46,8 @@ const lines = text.split('\n');
 const sections = [];
 let cur = null;
 for (const line of lines) {
-  const m = /^([a-z_]+):\s*$/.exec(line); // 顶格、只有 key + 冒号
+  // 顶格的 key，允许后面跟一个块标量符号 `|`（letter_to_future_self: | 这种）
+  const m = /^([a-z_]+):\s*\|?\s*$/.exec(line);
   if (m) {
     if (cur) sections.push(cur);
     cur = { key: m[1], lines: [] };
@@ -101,7 +102,7 @@ for (const s of usable) {
   sort += 10;
 }
 
-const now = await many<{ title: string }>(`select title from persona order by sort`);
+const now = await many(`select title from persona order by sort`);
 console.log(`  写入完成，现在 ${now.length} 条：${now.map((r) => r.title).join(' / ')}`);
 
 await closePool().catch(() => {});
