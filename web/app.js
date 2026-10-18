@@ -2081,9 +2081,28 @@ async function pageToolSleep() {
     ${toolBackRow('睡眠')}
 
     <section class="card ornate">
-      <div class="card-title">发一张手环截图<span class="caps">自动识别</span></div>
+      <div class="card-title">记一晚<span class="caps">自己记</span></div>
+      <div class="health-form" style="grid-template-columns:1fr 1fr">
+        <label>哪一晚<input type="date" id="sNight" value="${todayISO()}" max="${todayISO()}" /></label>
+        <label>总睡眠（分钟）<input type="number" id="sTotal" inputmode="numeric" placeholder="451" /></label>
+        <label>入睡<input type="time" id="sBed" value="23:00" /></label>
+        <label>醒来<input type="time" id="sWake" value="07:00" /></label>
+        <label>深睡（分钟）<input type="number" id="sDeep" inputmode="numeric" placeholder="75" /></label>
+        <label>夜里醒了几次<input type="number" id="sAwake" inputmode="numeric" placeholder="2" /></label>
+      </div>
+      <div class="row" style="border:0;padding:12px 0 0">
+        <button class="mini" id="sSave">存下来</button>
+        <span class="v">${st.count} 晚记录</span>
+      </div>
+      <p class="mind-note">
+        这些数字只有你在问他的时候他才会去查（get_sleep 工具）。平时不往他的上下文里塞。
+      </p>
+    </section>
+
+    <section class="card ornate">
+      <div class="card-title">或者发手环截图<span class="caps">自动读</span></div>
       <p style="font-size:var(--fs-small);color:var(--muted);margin:0 0 12px">
-        模型会直接从图里读数字。读不准的可以点那条记录改。
+        懒得手填就发截图，模型直接从图里读数字。读不准的可以点下面那条改。
       </p>
       <div class="row" style="border:0;padding:0">
         <button class="mini" id="sleepPick">选截图</button>
@@ -2129,6 +2148,40 @@ async function pageToolSleep() {
 
   const fileInput = $('#sleepFile');
   $('#sleepPick').addEventListener('click', () => fileInput.click());
+
+  // 手动记一晚
+  const sSave = $('#sSave');
+  if (sSave) {
+    sSave.addEventListener('click', async () => {
+      const val = (id) => {
+        const v = $(id).value.trim();
+        return v === '' ? null : v;
+      };
+      const total = val('#sTotal') || val('#sDeep')
+        ? (() => {
+            const t = Number(val('#sTotal'));
+            return Number.isFinite(t) && t > 0 ? t : null;
+          })()
+        : null;
+      try {
+        await api('/sleep', {
+          method: 'POST',
+          body: JSON.stringify({
+            night: val('#sNight') || todayISO(),
+            bedtime: val('#sBed'),
+            wakeTime: val('#sWake'),
+            totalMinutes: total,
+            deepMinutes: val('#sDeep'),
+            awakeCount: val('#sAwake'),
+          }),
+        });
+        toast('记好了', 1400);
+        pageToolSleep();
+      } catch (err) {
+        toast('保存失败：' + err.message, 2600);
+      }
+    });
+  }
 
   fileInput.addEventListener('change', async () => {
     const raw = (fileInput.files || [])[0];

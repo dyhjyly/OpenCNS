@@ -492,6 +492,45 @@ export function startHttpServer(): Server {
     }
   });
 
+  // 手动记睡眠（她要的主路径：自己记，他想看再查）
+  app.post('/sleep', requireToken, async (req, res) => {
+    try {
+      const b = (req.body ?? {}) as Record<string, unknown>;
+      const night = typeof b.night === 'string' && b.night ? b.night : new Date().toISOString().slice(0, 10);
+      const num = (v: unknown) => (v === undefined || v === null || v === '' ? null : Math.round(Number(v)));
+      const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+      await query(
+        `insert into sleep_records
+           (night, bedtime, wake_time, total_minutes, awake_count,
+            deep_minutes, light_minutes, rem_minutes, awake_minutes, source, note)
+         values ($1::date,$2,$3,$4,$5,$6,$7,$8,$9,'manual',$10)
+         on conflict (night) do update set
+           bedtime = excluded.bedtime, wake_time = excluded.wake_time,
+           total_minutes = excluded.total_minutes, awake_count = excluded.awake_count,
+           deep_minutes = excluded.deep_minutes, light_minutes = excluded.light_minutes,
+           rem_minutes = excluded.rem_minutes, awake_minutes = excluded.awake_minutes,
+           note = excluded.note, source = 'manual', updated_at = now()`,
+        [
+          night,
+          str(b.bedtime),
+          str(b.wakeTime),
+          num(b.totalMinutes),
+          num(b.awakeCount),
+          num(b.deepMinutes),
+          num(b.lightMinutes),
+          num(b.remMinutes),
+          num(b.awakeMinutes),
+          str(b.note),
+        ],
+      );
+      const { listSleep } = await import('../health/sleep.js');
+      return res.json({ ok: true, record: (await listSleep(30)).find((r) => r.night === night) ?? null });
+    } catch (err) {
+      log.error('手动记睡眠失败', errFields(err));
+      return res.status(500).json(errFields(err));
+    }
+  });
+
   app.post('/sleep/analyze', requireToken, async (req, res) => {
     try {
       const uploadId = String((req.body as { uploadId?: string })?.uploadId ?? '');

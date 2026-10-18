@@ -132,6 +132,22 @@ function buildJobs(): JobDefinition[] {
       },
     },
     {
+      // 凌晨的记忆时间：把今天的原句摆给他看 + 规则 + save_memory 工具
+      // 记几条、记成摘要还是保原句、一条都不记 —— 都是他自己决定
+      key: 'nightly_memory',
+      kind: 'maintenance',
+      everyMs: 20 * 60_000,
+      async run() {
+        const { hourNow, ranToday, markRan } = await import('./guard.js');
+        const h = await hourNow();
+        if (h < 3 || h >= 5) return; // 只在 03:00~04:59 之间
+        if (await ranToday('nightly_memory')) return;
+        const { runNightlyMemory } = await import('../memory/nightly.js');
+        const r = await runNightlyMemory();
+        await markRan('nightly_memory', { saved: r.saved, skipped: r.skipped });
+      },
+    },
+    {
       // 健康数据只留近两周：越攒越多、价值掉得快，留着只会让查询变慢、上下文变脏
       key: 'health_prune',
       kind: 'maintenance',
