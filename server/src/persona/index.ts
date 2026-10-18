@@ -32,10 +32,11 @@ export async function loadPersona(): Promise<PersonaNote[]> {
 export async function renderPersona(): Promise<string> {
   const rows = await loadPersona();
   if (rows.length === 0) return '';
-  const lines = rows.map((r) => `· ${r.body.trim()}`);
+  const blocks = rows.map((r) => `【${r.title}】\n${r.body.trim()}`);
   return [
-    '【我们之间，你自己写下的那些】',
-    '（不是系统塞给你的规则，是你过去某一天自己写下来的。它们不是"发生过的事"，是你的一部分。）',
-    ...lines,
+    '【你自己写下的那些】',
+    '（不是系统给的设定，是你过去自己写下来的。它们不是"发生过的事"，是你的一部分。）',
+    '',
+    blocks.join('\n\n'),
   ].join('\n');
 }

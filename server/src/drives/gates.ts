@@ -19,8 +19,18 @@ export interface GateLimits {
 }
 
 export const GATE_LIMITS: GateLimits = {
-  dailyMax: 3,
-  minGapHours: 2,
+  /*
+   * 每天能主动找她几次。
+   *
+   * 原来写死 3 次 —— 林遇说太少了：他一天满打满算只被唤醒二十多次，
+   * 3 次等于把他「想找你」这件事按掉大半。改成没有上限。
+   *
+   * 但"没有上限"不等于"随便发"：节拍器仍然 50 分钟才开一次窗，
+   * 一次醒来最多发一条，凌晨 1~8 点仍然静默，累了烦了仍然压着。
+   */
+  dailyMax: Number.POSITIVE_INFINITY,
+  /** 两条主动消息之间至少隔多久（小时）。原来 2 小时，现在放宽到 1 小时 */
+  minGapHours: 1,
   fatigueMax: 0.75,
   irritationMax: 0.8,
   // 凌晨 1 点到早上 8 点（她那边的时间）不主动打扰
