@@ -15,7 +15,8 @@ export interface GateLimits {
   minGapHours: number;
   fatigueMax: number;
   irritationMax: number;
-  quietHours: [number, number];
+  /** [起, 止) 小时。空数组 = 不设静默时段 */
+  quietHours: number[];
 }
 
 export const GATE_LIMITS: GateLimits = {
@@ -33,8 +34,11 @@ export const GATE_LIMITS: GateLimits = {
   minGapHours: 1,
   fatigueMax: 0.75,
   irritationMax: 0.8,
-  // 凌晨 1 点到早上 8 点（她那边的时间）不主动打扰
-  quietHours: [1, 8],
+  /*
+   * 原来凌晨 1~8 点静默（怕吵醒她）。林遇说不用静默，所以清空。
+   * 留空数组 = 任何时间都可以；想恢复就写 [1, 8]。
+   */
+  quietHours: [],
 };
 
 export interface GateStats {
@@ -97,9 +101,12 @@ export async function checkProactiveGates(): Promise<GateResult> {
   if (stats.irritation > GATE_LIMITS.irritationMax) {
     blockedBy.push('烦着，不适合开口');
   }
-  const [from, to] = GATE_LIMITS.quietHours;
-  if (stats.localHour >= from && stats.localHour < to) {
-    blockedBy.push('这个点她大概在睡');
+  // 静默时段（可空）。空数组 = 全天都可以，不加这条
+  if (GATE_LIMITS.quietHours.length === 2) {
+    const [from, to] = GATE_LIMITS.quietHours as [number, number];
+    if (stats.localHour >= from && stats.localHour < to) {
+      blockedBy.push('这个点她大概在睡');
+    }
   }
 
   return { allowed: blockedBy.length === 0, blockedBy, stats, limits: GATE_LIMITS };
