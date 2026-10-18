@@ -81,9 +81,15 @@ function buildJobs(): JobDefinition[] {
     },
     {
       // M3：滑出窗口的对话 -> 第一人称情景记忆
+      //
+      // **已停用**（2026-10-18）。林遇发现"昨天聊的几乎每句话都被记了"，
+      // 就是这个任务干的：每 5 分钟把所有滑出窗口的对话压成一条第三人称 episode。
+      // 改成他自己在凌晨的记忆时间里用 save_memory 决定记什么。
+      // 想恢复：把下面的开关改回 true。
       key: 'compress_queue',
       kind: 'memory',
       everyMs: 5 * 60_000,
+      enabled: false,
       async run() {
         const sessions = await findSessionsWithPending(2);
         if (sessions.length === 0) return;

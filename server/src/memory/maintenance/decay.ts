@@ -69,12 +69,17 @@ export async function runDecay(): Promise<DecayResult> {
   );
 
   // 4) 奠基记忆永不衰减：强制鲜活、且必须在活跃池里
+  //
+  // 注意：**pruned 不能复活**。
+  // 踩过的坑：这里原来写的是 `state in ('archived','pruned')` 就改回 active，
+  // 结果她（或脚本）删掉的记忆，只要被访问一次就自己爬回记忆库 ——
+  // 人格种子那 5 条就是这样又冒出来的。pruned 是"她决定不要了"，不是"沉底"。
   const pinned = await many<{ id: string }>(
     `update memory_items
         set decay_score = 1.0,
-            state = case when state in ('archived', 'pruned') then 'active' else state end,
+            state = case when state = 'archived' then 'active' else state end,
             updated_at = now()
-      where pinned and (decay_score < 1.0 or state <> 'active')
+      where pinned and state <> 'pruned' and (decay_score < 1.0 or state <> 'active')
       returning id`,
   );
 

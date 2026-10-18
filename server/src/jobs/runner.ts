@@ -16,6 +16,8 @@ export interface JobDefinition {
   kind: string;
   /** 两次运行之间的间隔 */
   everyMs: number;
+  /** 显式关掉（默认开）。关掉的任务不再登记为 due，也不会被执行 */
+  enabled?: boolean;
   run: () => Promise<void>;
 }
 
@@ -99,6 +101,11 @@ export async function runDueJobs(defs: JobDefinition[], limit = 5): Promise<numb
     if (!def) {
       // 库里有、代码里没有：标记失败，提示清理
       await markFailed(row.job_key, 60_000, new Error('代码里没有注册这个任务'));
+      continue;
+    }
+    if (def.enabled === false) {
+      // 关掉的任务：把下次运行时间推远，不要每分钟空转
+      await markDone(row.job_key, 24 * 60 * 60_000);
       continue;
     }
 
