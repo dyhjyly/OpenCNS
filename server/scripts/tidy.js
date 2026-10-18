@@ -23,7 +23,20 @@
  *   node scripts/tidy.js restore --id=xxx
  */
 
-import { many, one, query, closePool } from '../build/db/pool.js';
+import { config } from 'dotenv';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+
+/*
+ * 关键：显式加载 server/.env，而不是靠 cwd。
+ * 原来 build/db/pool.js 里的 `import 'dotenv/config'` 是从**当前目录**找 .env 的，
+ * 所以只要不在 /opt/opencns/server 下运行，就会报
+ * "DATABASE_URL: expected string, received undefined"。
+ */
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+config({ path: path.resolve(HERE, '../.env'), quiet: true });
+
+const { many, one, closePool } = await import('../build/db/pool.js');
 
 const args = {};
 for (const a of process.argv.slice(3)) {
