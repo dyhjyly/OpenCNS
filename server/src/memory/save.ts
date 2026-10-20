@@ -20,6 +20,8 @@ export interface SaveMemoryInput {
   causal?: string;
   eventTime?: string;
   importance?: number;
+  /** 这条记忆是哪条路写进来的：save_memory（聊天里）/ nightly（凌晨日记）/ wake */
+  via?: string;
 }
 
 const KINDS = new Set(['episode', 'semantic', 'experience', 'reflection']);
@@ -106,7 +108,7 @@ export async function saveMemory(input: SaveMemoryInput): Promise<string> {
         eventTime ? 'exact' : 'unknown',
         Math.min(1, Math.max(0.1, input.importance ?? 0.5)),
         embedding,
-        safeJson({ source: 'self', via: 'save_memory' }, '{}'),
+        safeJson({ source: 'self', via: input.via ?? 'save_memory' }, '{}'),
       ],
     );
     if (!row) return '没写成：数据库没返回 id。';

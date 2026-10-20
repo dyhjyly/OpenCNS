@@ -28,6 +28,8 @@ export interface WakeRoomView {
   lockedSurprises: number;
   /** 他拍拍她的记录 */
   pats: { at: string; suffix: string | null }[];
+  /** 他凌晨写下的日记（每日记忆） */
+  diaries: { id: string; at: string; kind: string; content: string }[];
   counts: { wakes: number; decided: number; skipped: number };
 }
 
@@ -123,12 +125,24 @@ export async function getWakeRoom(limit = 20): Promise<WakeRoomView> {
       order by created_at desc limit 10`,
   ).catch(() => []);
 
+  /*
+   * 日记：他凌晨在「记忆时间」里写下的东西。
+   * 用 provenance.via = 'nightly' 认，这样和聊天里随手记的分得开。
+   */
+  const diaries = await many<{ id: string; at: string; kind: string; content: string }>(
+    `select id::text, ingested_at as at, kind, content
+       from memory_items
+      where state = 'active' and provenance->>'via' = 'nightly'
+      order by ingested_at desc limit 20`,
+  ).catch(() => []);
+
   return {
     entries,
     notes: notes.map((n) => ({ id: n.id, kind: n.kind, content: n.content, expiresAt: n.expires_at })),
     surprises: visible,
     lockedSurprises: locked,
     pats,
+    diaries: diaries.map((d) => ({ id: d.id, at: d.at, kind: d.kind, content: d.content })),
     counts: counts ?? { wakes: 0, decided: 0, skipped: 0 },
   };
 }

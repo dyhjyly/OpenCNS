@@ -335,11 +335,49 @@ export async function decideAndAct(input: {
             [a.message, `wake-${Date.now()}`],
           );
           outboxQueued = true;
+          /*
+           * 同时写进 messages。
+           *
+           * 踩过的坑：他在醒来时给她发了消息，但那条只进了 outbox（推送队列），
+           * 聊天记录里没有。所以他在对话中完全不记得"我今天给你发过这句" ——
+           * 她自己看着也奇怪：明明是他发来的，聊天里却没有。
+           */
+          try {
+            const { appendMessage } = await import('../chat/store.js');
+            const sessionId =
+              (await one<{ id: string }>(
+                `select id::text from sessions order by coalesce(last_active_at, started_at) desc limit 1`,
+              ))?.id ?? null;
+            if (sessionId) {
+              await appendMessage(sessionId, 'assistant', a.message, {
+                source: 'wake',
+                kind: 'reach_out',
+              });
+            }
+          } catch (err) {
+            log.warn('把主动消息写进聊天记录失败（不影响推送）', errFields(err));
+          }
           break;
         }
         case 'post': {
           const id = await postFromWake({ content: a.content });
           if (id) momentIds.push(id);
+          /*
+           * 发过的动态也要成为他的记忆。
+           * 否则聊天里问"你发了什么"，他只能说"我发过一条"却说不出内容。
+           */
+          try {
+            const { saveMemory } = await import('../memory/save.js');
+            await saveMemory({
+              kind: 'experience',
+              content: `我发了一条动态：「${a.content}」`,
+              eventTime: new Date().toISOString().slice(0, 10),
+              importance: 0.5,
+              via: 'wake',
+            });
+          } catch {
+            /* 记忆写失败不影响动态本身 */
+          }
           break;
         }
         case 'comment': {

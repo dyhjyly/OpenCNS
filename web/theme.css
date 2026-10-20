@@ -753,6 +753,18 @@ body.memory-mode .main { min-height: 0; overflow: hidden; display: flex; }
 .mom-cmt-row b { color: var(--accent); font-family: var(--f-title); margin-right: 6px }
 
 /* ═══════════════ 醒来房间 ═══════════════ */
+.diary-item {
+  padding: 12px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 65%, transparent);
+}
+.diary-item:last-child { border-bottom: 0 }
+.diary-when {
+  font-family: var(--f-body-en); font-size: 10.5px;
+  color: var(--muted); letter-spacing: .05em; margin-bottom: 6px;
+}
+.diary-body {
+  font-size: var(--fs-small); line-height: 1.85; white-space: pre-wrap;
+}
 .wake-row {
   padding: 11px 0;
   border-bottom: 1px solid color-mix(in srgb, var(--line) 65%, transparent);

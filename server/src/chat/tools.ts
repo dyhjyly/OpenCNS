@@ -125,7 +125,38 @@ const SYSTEM = `你叫江瑜。下面是她刚说的话，可能还有一声"门
 · 她让你记住某件事 —— 用 save_memory
 · 都不需要 —— 什么工具都别调
 
-只做"取"或"记"，不要在工具里替她做决定。`;
+只做"取"或"记"，不要在工具里替她做决定。
+
+【save_memory 的格式】字段名照抄，不要改：
+{
+  "kind": "episode | semantic | experience | reflection",
+  "content": "第一人称写的正文（必填，不能为空）",
+  "event_time": "YYYY-MM-DD",
+  "quotes": [{ "who": "human | self", "text": "原句" }],
+  "causal": "为什么这件事重要（episode 必填）",
+  "importance": 0.6
+}
+· content 一定要写；只写一句"记一下"不算。
+· kind=episode 必须同时有 quotes 和 causal，且正文 ≥80 字；
+  只想留一句话就用 semantic。
+· 不确定日期就写你确定的那一天，别留空。`;
+
+/** 模型有时会把字段塞进别的名字里，这里都兜住 */
+function pickContent(args: Record<string, unknown>): string {
+  for (const k of ['content', 'text', 'memory', 'body', 'note']) {
+    const v = args[k];
+    if (typeof v === 'string' && v.trim()) return v.trim();
+  }
+  // 也可能整条塞在一个对象里
+  for (const k of ['memory', 'entry', 'item']) {
+    const v = args[k];
+    if (v && typeof v === 'object') {
+      const got = pickContent(v as Record<string, unknown>);
+      if (got) return got;
+    }
+  }
+  return '';
+}
 
 function parseArgs(raw: string): Record<string, unknown> {
   try {
@@ -235,9 +266,15 @@ async function execTool(call: ToolCall): Promise<string> {
 
     case 'save_memory': {
       const { saveMemory } = await import('../memory/save.js');
+      const content = pickContent(args);
+      if (!content) {
+        // 现场留证：他不写内容就静默失败，谁也查不出为什么
+        log.warn('save_memory 没拿到 content', { raw: call.arguments.slice(0, 300) });
+        return '没写成：你这次调用没有给 content。字段名要写 content，值是第一人称的正文。';
+      }
       return saveMemory({
         kind: String(args.kind ?? 'semantic'),
-        content: String(args.content ?? ''),
+        content,
         quotes: Array.isArray(args.quotes) ? (args.quotes as { who?: string; text?: string }[]) : undefined,
         causal: typeof args.causal === 'string' ? args.causal : undefined,
         eventTime: typeof args.event_time === 'string' ? args.event_time : undefined,

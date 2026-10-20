@@ -1017,6 +1017,22 @@ async function pageWake() {
         <p style="font-size:var(--fs-small);color:var(--muted);margin:0">他藏起来的，到时间自己会解开。</p>
       </section>` : ''}
 
+    ${(r.diaries || []).length ? `
+      <section class="card ornate">
+        <div class="card-title">他写的日记<span class="caps">${r.diaries.length} 篇</span></div>
+        ${r.diaries.map((d) => `
+          <div class="diary-item">
+            <div class="diary-when">${fmt(d.at)} · ${esc(KIND_LABEL[d.kind] || d.kind)}</div>
+            <div class="diary-body">${esc(d.content)}</div>
+          </div>`).join('')}
+      </section>` : `
+      <section class="card ornate">
+        <div class="card-title">他写的日记</div>
+        <p style="font-size:var(--fs-small);color:var(--muted);margin:0">
+          还没有。凌晨的记忆时间里他写了什么，会出现在这里。
+        </p>
+      </section>`}
+
     ${r.pats && r.pats.length ? `
       <section class="card ornate">
         <div class="card-title">他拍了拍你<span class="caps">${r.pats.length} 次</span></div>

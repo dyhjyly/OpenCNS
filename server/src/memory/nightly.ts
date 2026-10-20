@@ -176,6 +176,7 @@ export async function runNightlyMemory(): Promise<NightlyResult> {
         causal: typeof a.causal === 'string' ? a.causal : undefined,
         eventTime: typeof a.event_time === 'string' ? a.event_time : today,
         importance: typeof a.importance === 'number' ? a.importance : undefined,
+        via: 'nightly',
       });
       results.push(res);
       if (res.startsWith('记下了')) saved++;

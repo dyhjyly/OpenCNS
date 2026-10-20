@@ -6,6 +6,7 @@ import { chatText, chatTextStream, type ChatMessage, type ContentPart } from '..
 import { readTextUpload, readUpload } from './uploads.js';
 import { recentPats } from '../social/moments.js';
 import { buildDoorbell } from '../memory/doorbell.js';
+import { selfActivityLines } from '../memory/self-activity.js';
 import { renderPersona } from '../persona/index.js';
 import { runToolPass } from './tools.js';
 import { buildDriveHints } from '../drives/render.js';
@@ -206,12 +207,13 @@ async function prepareTurn(req: ChatRequest): Promise<PreparedTurn> {
     }
   }
 
-  /*
-   * 他自己去查的数据。
-   *
-   * 她说过：朋友圈、睡眠、步数、经期这些"平时我自己记就好，他想看的时候再问系统要"。
-   * 所以一律不常驻上下文，全部走工具。门铃一起交给它，它才知道要不要翻原文。
-   */
+  // 今天你自己做过的事（醒来、发过的消息、发过的动态）—— 否则聊天里他不认自己做过什么
+  const selfActs = await selfActivityLines().catch(() => [] as string[]);
+  if (selfActs.length > 0) {
+    const block = ['【今天你自己做过的事】（这些是你做的，不是她说的）', ...selfActs].join('\n');
+    contextBlock = contextBlock ? `${contextBlock}\n\n${block}` : block;
+  }
+
   const toolPass = await runToolPass(
     [
       ...history.map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content }) as const),
