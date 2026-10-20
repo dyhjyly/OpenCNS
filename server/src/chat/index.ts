@@ -123,17 +123,66 @@ interface PreparedTurn {
   endSession: boolean;
 }
 
-async function prepareTurn(req: ChatRequest): Promise<PreparedTurn> {
+/**
+ * 只组装、不调模型、不写库 —— 用来给"上下文预览"接口取证。
+ * 林遇要看的就是这个：他每轮到底收到了什么。
+ */
+export async function previewContext(message: string, sessionIdInput?: string): Promise<{
+  messages: ChatMessage[];
+  sessionId: string;
+  recall: { recalled: number; ids: string[] };
+  stats: { totalChars: number; blocks: { name: string; chars: number }[] };
+}> {
+  const turn = await prepareTurn({ message, sessionId: sessionIdInput, dryRun: true } as ChatRequest & {
+    dryRun: boolean;
+  });
+  const totalChars = turn.messages.reduce(
+    (n, m) =>
+      n + (typeof m.content === 'string' ? m.content.length : JSON.stringify(m.content).length),
+    0,
+  );
+  return {
+    messages: turn.messages,
+    sessionId: turn.sessionId,
+    recall: { recalled: turn.recall.recalled.length, ids: turn.recall.recalled.map((r) => r.id) },
+    stats: {
+      totalChars,
+      blocks: [
+        { name: 'system（身份 + 人格）', chars: (turn.messages[0]?.content as string)?.length ?? 0 },
+        {
+          name: '历史消息',
+          chars: turn.messages
+            .slice(1, -1)
+            .reduce((n, m) => n + (typeof m.content === 'string' ? m.content.length : 0), 0),
+        },
+        {
+          name: '这一轮（她的话 + 背景块）',
+          chars: (() => {
+            const last = turn.messages[turn.messages.length - 1];
+            if (!last) return 0;
+            return typeof last.content === 'string'
+              ? last.content.length
+              : JSON.stringify(last.content).length;
+          })(),
+        },
+      ],
+    },
+  };
+}
+
+async function prepareTurn(req: ChatRequest & { dryRun?: boolean }): Promise<PreparedTurn> {
   const startedAt = Date.now();
   const text = (req.message ?? '').trim();
   if (!text) throw new Error('message 不能为空');
 
   const actors = await getActorNames();
   const sessionId = await ensureSession(req.sessionId);
-  await appendMessage(sessionId, 'user', text, {
-    source: 'chat',
-    attachments: req.attachments ?? [],
-  });
+  if (!req.dryRun) {
+    await appendMessage(sessionId, 'user', text, {
+      source: 'chat',
+      attachments: req.attachments ?? [],
+    });
+  }
 
   // 召回（阻塞：向量 + 关键词 + 一次裁决）
   const tRecall = Date.now();

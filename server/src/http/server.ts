@@ -103,6 +103,24 @@ export function startHttpServer(): Server {
     }
   });
 
+  /*
+   * 上下文预览：把这一轮真正会发给模型的内容原样吐出来。
+   *
+   * 不调模型、不写库。她想看"他到底收到了什么"，就不用再猜了。
+   * 用法：GET /admin/context?q=随便一句话
+   */
+  app.get('/admin/context', requireToken, async (req, res) => {
+    try {
+      const { previewContext } = await import('../chat/index.js');
+      const q = String(req.query.q ?? '在吗');
+      const out = await previewContext(q, req.query.sessionId ? String(req.query.sessionId) : undefined);
+      return res.json({ ok: true, ...out });
+    } catch (err) {
+      log.error('上下文预览失败', errFields(err));
+      return res.status(500).json(errFields(err));
+    }
+  });
+
   app.get('/admin/config', requireToken, (_req, res) => {
     // 只回显非敏感信息：绝不返回任何 key
     res.json({
