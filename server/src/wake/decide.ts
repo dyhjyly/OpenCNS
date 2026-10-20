@@ -487,7 +487,8 @@ export async function decideAndAct(input: {
         default: return null;
       }
     };
-    const said = actTypes.map(describe).filter((x): x is string => Boolean(x));
+    // 同类动作只算一次（一次醒来评论两条，不该说两遍"回了她一句"）
+    const said = [...new Set(actTypes.map(describe).filter((x): x is string => Boolean(x)))];
     // 一次醒来最多落一条括注，不要刷屏
     const narration = said.length > 0 ? said.join('，') : '';
     const hasReachOut = actionNames.includes('reach_out');
