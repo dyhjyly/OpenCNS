@@ -463,6 +463,55 @@ export async function decideAndAct(input: {
     experienceId = row?.id;
   }
 
+  /*
+   * 把这次醒来做的事写进**对话流**里，按当时的顺序排在聊天记录中。
+   *
+   * 林遇的原话："不要单列在背景里面，他会觉得不是他做过的事情。"
+   * 所以：reach_out 那条已经是正常的 assistant 消息了；
+   * 其余动作（发动态 / 评论 / 做东西 / 藏惊喜 / 拍她 / 翻朋友圈）合成一条
+   * 第一人称的括注，落在同一个时间点上。
+   */
+  const CHATTY = new Set(['reach_out', 'rest', 'stay_quiet']);
+  const actTypes = actions.map((a) => a.type).filter((t) => !CHATTY.has(t));
+  if (actTypes.length > 0) {
+    const describe = (t: string): string | null => {
+      switch (t) {
+        case 'post': return '发了条动态';
+        case 'comment': return '在她那条下面回了她一句';
+        case 'like': return '给她点了个赞';
+        case 'work': return '做了会儿自己的事';
+        case 'pat': return '拍了拍她';
+        case 'hide_surprise': return '藏了个惊喜';
+        case 'read_moments': return null;
+        case 'read_notes': return null;
+        default: return null;
+      }
+    };
+    const said = actTypes.map(describe).filter((x): x is string => Boolean(x));
+    // 一次醒来最多落一条括注，不要刷屏
+    const narration = said.length > 0 ? said.join('，') : '';
+    if (narration || experienceText) {
+      try {
+        const { appendMessage } = await import('../chat/store.js');
+        const sessionId =
+          (await one<{ id: string }>(
+            `select id::text from sessions order by last_activity_at desc nulls last, started_at desc limit 1`,
+          ))?.id ?? null;
+        if (sessionId) {
+          const body = narration ? `（${narration}。）` : `（${experienceText}）`;
+          await appendMessage(sessionId, 'assistant', body, {
+            source: 'wake',
+            kind: 'wake_act',
+            decision,
+            actions: actionNames,
+          });
+        }
+      } catch (err) {
+        log.warn('把醒来动作写进对话流失败（不影响其他）', errFields(err));
+      }
+    }
+  }
+
   // ── 满足回落 ──
   const decays: { key: string; delta: number; reasonCode: string; reasonText: string }[] = [];
   if (actionNames.includes('reach_out')) {

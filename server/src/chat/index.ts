@@ -6,7 +6,6 @@ import { chatText, chatTextStream, type ChatMessage, type ContentPart } from '..
 import { readTextUpload, readUpload } from './uploads.js';
 import { recentPats } from '../social/moments.js';
 import { buildDoorbell } from '../memory/doorbell.js';
-import { selfActivityLines } from '../memory/self-activity.js';
 import { renderPersona, listPersonaTitles } from '../persona/index.js';
 import { runToolPass } from './tools.js';
 import { buildDriveHints } from '../drives/render.js';
@@ -292,13 +291,13 @@ async function prepareTurn(req: ChatRequest & { dryRun?: boolean }): Promise<Pre
     }
   }
 
-  // 今天你自己做过的事（醒来、发过的消息、发过的动态）—— 否则聊天里他不认自己做过什么
-  const selfActs = await selfActivityLines().catch(() => [] as string[]);
-  if (selfActs.length > 0) {
-    const block = ['【今天你自己做过的事】（这些是你做的，不是她说的）', ...selfActs].join('\n');
-    contextBlock = contextBlock ? `${contextBlock}\n\n${block}` : block;
-  }
-  log.info('自己的近况', { lines: selfActs.length });
+  /*
+   * 他醒来做过的事**不再单列在背景里**。
+   *
+   * 林遇的原话："不要单列在背景里面，他会觉得不是他做过的事情。"
+   * 所以那些动作现在直接写成 assistant 消息，按当时的时间落在对话流里
+   * （见 wake/decide.ts）。这里不再重复一份清单。
+   */
 
   const toolPass = await runToolPass(
     [
