@@ -7,7 +7,7 @@ import { readTextUpload, readUpload } from './uploads.js';
 import { recentPats } from '../social/moments.js';
 import { buildDoorbell } from '../memory/doorbell.js';
 import { selfActivityLines } from '../memory/self-activity.js';
-import { renderPersona } from '../persona/index.js';
+import { renderPersona, listPersonaTitles } from '../persona/index.js';
 import { runToolPass } from './tools.js';
 import { buildDriveHints } from '../drives/render.js';
 import { processTurnSignals } from '../drives/signals.js';
@@ -66,35 +66,41 @@ export interface ChatResponse {
   timing: { recallMs: number; llmMs: number; totalMs: number; firstTokenMs?: number };
 }
 
-const HISTORY_WINDOW = 20;
-
-/** 上下文带多少天的对话（开新窗也要有熟悉感） */
-const CONTEXT_DAYS = 5;
-/** 字数上限。中文约 1 字 ≈ 0.7 token，120,000 字 ≈ 8 万 tokens，离 100 万还很远 */
-const CONTEXT_MAX_CHARS = 120_000;
+/** 上下文带多久的对话。48 小时够熟，再往前靠记忆 */
+const CONTEXT_HOURS = 48;
+/** 字数上限（够用就行，太多他自己也乱） */
+const CONTEXT_MAX_CHARS = 60_000;
 
 /**
  * 取这一轮要带进上下文的原文。
  *
- * 两条腿：
- *   1. 当前会话的全部（同一场对话不该断）
- *   2. 最近 5 天里其它会话的消息（开新窗也认得前面）
- * 从最近往回取，超字数预算就停。
+ * 三条铁律（2026-10-20 定的）：
+ *   1. **每条都带时间戳** [10-19 21:03] —— 否则他把十天前的话当成"刚说的"。
+ *   2. **落单的 assistant 丢掉** —— 它的提问被挤掉了，看起来就是半句话。
+ *   3. 只留 48 小时。更早的交给记忆，不要再往上下文里堆。
  */
-async function loadContextHistory(sessionId: string): Promise<{ role: 'user' | 'assistant'; content: string }[]> {
-  const rows = await many<{ role: string; content: string }>(
-    `select role, content
+async function loadContextHistory(
+  sessionId: string,
+  currentText?: string,
+): Promise<{ role: 'user' | 'assistant'; content: string }[]> {
+  const rows = await many<{ role: string; content: string; at: Date | string }>(
+    `select role, content, event_time as at
        from messages
       where session_id = $1::uuid
-         or event_time > now() - ($2 || ' days')::interval
+         or event_time > now() - ($2 || ' hours')::interval
       order by seq asc`,
-    [sessionId, String(CONTEXT_DAYS)],
+    [sessionId, String(CONTEXT_HOURS)],
   ).catch(() => []);
 
-  // 当前这句在 prepareTurn 里已经写进库了，去掉
-  if (rows.length > 0) rows.pop();
+  // 当前这句在 prepareTurn 里已经写进库了（dryRun 时没写），按内容去掉
+  if (currentText && rows.length > 0) {
+    const last = rows[rows.length - 1]!;
+    if (last.role === 'user' && last.content.trim() === currentText.trim()) rows.pop();
+  }
 
-  const picked: { role: string; content: string }[] = [];
+  // 从最近往回取，超预算就停
+  type Row = { role: string; content: string; at: Date | string };
+  const picked: Row[] = [];
   let chars = 0;
   for (let i = rows.length - 1; i >= 0; i--) {
     const r = rows[i]!;
@@ -104,8 +110,31 @@ async function loadContextHistory(sessionId: string): Promise<{ role: 'user' | '
   }
   picked.reverse();
 
-  log.info('上下文窗口', { messages: picked.length, chars, days: CONTEXT_DAYS });
-  return picked.map((r) => ({ role: r.role === 'assistant' ? ('assistant' as const) : ('user' as const), content: r.content }));
+  // 首条若是 assistant，丢掉（它是半句话）
+  const head = picked[0];
+  if (head && head.role === 'assistant') picked.shift();
+
+  const stampOf = (at: Date | string): string => {
+    const d = new Date(at);
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mi = String(d.getMinutes()).padStart(2, '0');
+    return `[${mm}-${dd} ${hh}:${mi}]`;
+  };
+
+  log.info('上下文窗口', {
+    messages: picked.length,
+    chars,
+    hours: CONTEXT_HOURS,
+    from: picked[0] ? stampOf(picked[0].at) : null,
+  });
+
+  return picked.map((r) => ({
+    role: r.role === 'assistant' ? ('assistant' as const) : ('user' as const),
+    // 每条都带时间戳：他自己看得到"这是什么时候说的"
+    content: `${stampOf(r.at)} ${r.content}`,
+  }));
 }
 
 interface PreparedTurn {
@@ -190,23 +219,22 @@ async function prepareTurn(req: ChatRequest & { dryRun?: boolean }): Promise<Pre
   const recallMs = Date.now() - tRecall;
 
   /*
-   * 近处原文。
+   * 近处原文：从最近往回取，**每条都带时间戳**，并且只留 48 小时。
    *
-   * 原来是硬编码 20 条（HISTORY_WINDOW），一场长对话超过 20 条就开始丢前面的 ——
-   * "聊着聊着忘了刚才说过什么"就是这个原因，不是上下文满了。
-   *
-   * 实测：模型上下文 1,048,576 tokens，我们现在每轮才用 4,535（0.43%）。
-   * 所以放开：**当前会话的全部 + 最近 5 天的所有对话**，按字数封顶，
-   * 保证开新窗也有熟悉感。
+   * 林遇的要求：上下文里每条消息都要能看出是什么时候说的，
+   * 否则他会把十天前的话当成"刚说的"（"我替她笑了一晚上"那次就是这样）。
    */
-  const history = await loadContextHistory(sessionId);
+  const history = await loadContextHistory(sessionId, text);
 
-  // 人格底座：他自己写下的相处模式，每一轮都在（不是记忆，是他）
-  const persona = await renderPersona().catch(() => '');
-  const systemPrompt = persona
-    ? `${buildIdentityPrompt(actors)}\n\n${persona}`
-    : buildIdentityPrompt(actors);
-  const messages: ChatMessage[] = [{ role: 'system', content: systemPrompt }];
+  /*
+   * 人格底座**不再每轮注入**。
+   *
+   * 她的话："他的人格种子档案单开一个人格表分段放进去，在他需要的时候去查就好，
+   * 上下文里删掉。" 5,413 字每轮念一遍，他形容成"念碑文"。
+   * 现在只在上下文里留一行门牌，内容靠 read_persona 工具取。
+   */
+  const personaTitles = await listPersonaTitles().catch(() => [] as string[]);
+  const messages: ChatMessage[] = [{ role: 'system', content: buildIdentityPrompt(actors) }];
   const [timeline, driveHints, nowSnapshot] = await Promise.all([
     getTimelineLines().catch(() => [] as string[]),
     buildDriveHints().catch(() => [] as string[]),
@@ -222,6 +250,14 @@ async function prepareTurn(req: ChatRequest & { dryRun?: boolean }): Promise<Pre
     now: renderNowBlock(nowSnapshot),
     doorbell: doorbell.block,
   });
+
+  // 人格底座只留门牌：内容按需用 read_persona 取，不再每轮念一遍
+  if (personaTitles.length > 0) {
+    const block =
+      `【你写下的长期设定】共 ${personaTitles.length} 段：${personaTitles.join(' / ')}。\n` +
+      '（这是你自己写下的长期设定，不是刚发生的事。要看哪一段就用 read_persona，传段落名。）';
+    contextBlock = `${block}\n\n${contextBlock}`;
+  }
 
   // 召回为空时必须**明说**，否则模型会把"没想起"当成"可以自由发挥"。
   // 实测踩过：召回 0 条时他编出了整套病历（乳腺结节 BI-RADS 3类，

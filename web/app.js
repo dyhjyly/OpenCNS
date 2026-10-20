@@ -312,6 +312,23 @@ function fileToBase64(file) {
   });
 }
 
+/**
+ * 消息时间：今天只显示时分，昨天加"昨天"，更早带月日。
+ * 每条都显示 —— 她说得对，只显示时分的话，十天前的话看着像刚说的。
+ */
+function msgTime(at) {
+  const d = at ? new Date(at) : new Date();
+  if (Number.isNaN(d.getTime())) return hhmm();
+  const now = new Date();
+  const hm = hhmm(d);
+  if (d.toDateString() === now.toDateString()) return hm;
+  const y = new Date(now);
+  y.setDate(y.getDate() - 1);
+  if (d.toDateString() === y.toDateString()) return `昨天 ${hm}`;
+  const sameYear = d.getFullYear() === now.getFullYear();
+  return `${sameYear ? '' : `${d.getFullYear()}/`}${d.getMonth() + 1}/${d.getDate()} ${hm}`;
+}
+
 function bubbleEl(who, text, at) {
   const wrap = document.createElement('div');
   wrap.className = `bwrap ${who === 'me' ? 'mine' : ''}`;
@@ -321,7 +338,7 @@ function bubbleEl(who, text, at) {
   wrap.appendChild(b);
   const time = document.createElement('div');
   time.className = 'mtime';
-  time.textContent = at || hhmm();
+  time.textContent = at || msgTime();
   wrap.appendChild(time);
   return { wrap, bubble: b, time };
 }
@@ -413,9 +430,9 @@ async function pageChat() {
         if (m.role === 'assistant') {
           const reasoning = m.meta && m.meta.reasoning;
           if (reasoning && store.thinking) log.appendChild(thinkingBlock(reasoning));
-          assistantBubbles(log, m.content, hhmm(new Date(m.at)), { bubbles: [] });
+          assistantBubbles(log, m.content, msgTime(new Date(m.at)), { bubbles: [] });
         } else {
-          const el = bubbleEl('me', m.content, hhmm(new Date(m.at)));
+          const el = bubbleEl('me', m.content, msgTime(new Date(m.at)));
           // 附件回显
           const atts = (m.meta && m.meta.attachments) || [];
           if (atts.length) {

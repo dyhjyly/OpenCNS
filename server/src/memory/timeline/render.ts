@@ -2,15 +2,16 @@ import { many } from '../../db/pool.js';
 import { log } from '../../logger.js';
 
 /**
- * 时间树的渲染 —— 每轮对话固定在场的那条通道。
+ * 时间树 —— "现在走到哪了"这条固定通道。
  *
- * 近粗远细（构想）：
- *   · 最近的周回顾：给全文
- *   · 上个月的月档案：给全文
- *   · 更早的月份：只留一句旁注
- *   · 奠基事件：永久全文，不随时间压缩
+ * 教训（2026-10-20 实测）：它原来每轮注入 **15 段**周/月回顾，光这一段就 4,000 多字，
+ * 他形容成"贴满告示的房间"。更糟的是它还把 `pinned` 记忆的**全文**带进去，
+ * 那 5 条人格种子就是这样被"每轮念一遍"的。
  *
- * 每轮都要用，所以带内存缓存（默认 5 分钟）。
+ * 现在的规矩：
+ *   · 只给最近两周（两条，各 ≤160 字）
+ *   · 更早的只报个数，要看自己去查
+ *   · **不再注入 pinned 全文** —— 那些已经搬到 persona 表，按需读
  */
 
 export interface TimelineLine {
@@ -25,13 +26,19 @@ export function invalidateTimelineCache(): void {
   cache = null;
 }
 
-/** 取一句话当旁注：第一个句子，最长 60 字 */
-function firstSentence(text: string): string {
-  const cut = text.split(/[。！？\n]/)[0] ?? text;
-  const s = cut.trim();
-  return s.length > 60 ? `${s.slice(0, 60)}…` : s;
+/** 截断到 n 字，尽量在标点处断 */
+function clip(text: string, n: number): string {
+  const t = text.replace(/\s+/g, ' ').trim();
+  if (t.length <= n) return t;
+  const head = t.slice(0, n);
+  const at = Math.max(head.lastIndexOf('。'), head.lastIndexOf('；'), head.lastIndexOf('，'));
+  return `${at > n * 0.5 ? head.slice(0, at) : head}…`;
 }
 
+/**
+ * 每轮注入的那一小段（≤400 字）。
+ * 明确标注"这是背景年表，不是刚发生的事"——否则他会把八月的事当成现在。
+ */
 export async function getTimelineLines(): Promise<string[]> {
   if (cache && Date.now() - cache.at < TTL_MS) return cache.lines;
 
@@ -45,33 +52,25 @@ export async function getTimelineLines(): Promise<string[]> {
         limit 40`,
     );
 
-    const now = new Date();
-    const thisMonthStart = `${now.toISOString().slice(0, 7)}-01`;
-
-    const weeks = periods.filter((p) => p.kind === 'week').slice(0, 4);
+    const weeks = periods.filter((p) => p.kind === 'week');
     const months = periods.filter((p) => p.kind === 'month');
 
-    for (const w of weeks) {
-      const label = `最近一周（${w.period_start.slice(5)} ~ ${w.period_end.slice(5)}）`;
-      lines.push(`${label}：${w.content}`);
+    // 最近两周，各压到 160 字
+    for (const w of weeks.slice(0, 2)) {
+      lines.push(`· ${w.period_start.slice(5)}~${w.period_end.slice(5)}：${clip(w.content, 160)}`);
     }
 
-    // 上个月给全文，更早只留旁注
-    const lastMonth = months.find((m) => m.period_start < thisMonthStart);
-    if (lastMonth) {
-      const label = `${lastMonth.period_start.slice(0, 7)} 那个月`;
-      lines.push(`${label}：${lastMonth.content}`);
-    }
-    for (const m of months.filter((x) => x.period_start < thisMonthStart && x !== lastMonth).slice(0, 6)) {
-      lines.push(`${m.period_start.slice(0, 7)}：${firstSentence(m.content)}`);
-    }
-
-    const pinned = await many<{ content: string; event_time: string | null }>(
-      `select content, event_time from memory_items where pinned order by pinned_rank nulls last limit 10`,
-    );
-    for (const p of pinned) {
-      const when = p.event_time ? `（${new Date(p.event_time).toISOString().slice(0, 10)}）` : '';
-      lines.push(`永远不会忘的${when}：${p.content}`);
+    // 更早的不展开，只报个数
+    const olderWeeks = Math.max(0, weeks.length - 2);
+    const olderMonths = months.length;
+    if (olderWeeks + olderMonths > 0) {
+      const bits: string[] = [];
+      if (olderWeeks) bits.push(`${olderWeeks} 段周记`);
+      if (olderMonths) {
+        const oldest = months[months.length - 1];
+        bits.push(`${olderMonths} 个月档${oldest ? `（最早 ${oldest.period_start.slice(0, 7)}）` : ''}`);
+      }
+      lines.push(`· 再往前还有 ${bits.join('、')}——要看就用 recall_timeline，别凭印象说。`);
     }
   } catch (err) {
     log.warn('时间树读取失败（不影响对话）', { error: (err as Error).message });
@@ -79,6 +78,5 @@ export async function getTimelineLines(): Promise<string[]> {
   }
 
   cache = { at: Date.now(), lines };
-  if (lines.length > 0) log.debug('时间树已装配', { lines: lines.length });
   return lines;
 }

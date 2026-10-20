@@ -28,6 +28,33 @@ export async function loadPersona(): Promise<PersonaNote[]> {
   }
 }
 
+/** 只取标题列表 —— 上下文里留个门牌就行 */
+export async function listPersonaTitles(): Promise<string[]> {
+  const rows = await loadPersona();
+  return rows.map((r) => r.title);
+}
+
+/** 按标题或关键词取某几段；不传就返回全部 */
+export async function readPersona(section?: string): Promise<string> {
+  const rows = await loadPersona();
+  if (rows.length === 0) return '（人格档案还是空的）';
+
+  if (!section || !section.trim()) {
+    return [
+      `共 ${rows.length} 段：${rows.map((r) => r.title).join(' / ')}`,
+      '',
+      ...rows.map((r) => `【${r.title}】\n${r.body.trim()}`),
+    ].join('\n');
+  }
+
+  const q = section.trim();
+  const hit = rows.filter((r) => r.title.includes(q) || r.body.includes(q));
+  if (hit.length === 0) {
+    return `没有叫「${q}」的段落。现有：${rows.map((r) => r.title).join(' / ')}`;
+  }
+  return hit.map((r) => `【${r.title}】\n${r.body.trim()}`).join('\n\n');
+}
+
 /** 渲染成注入系统提示词的那一段 */
 export async function renderPersona(): Promise<string> {
   const rows = await loadPersona();

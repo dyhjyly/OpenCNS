@@ -75,11 +75,19 @@ export async function saveMemory(input: SaveMemoryInput): Promise<string> {
     }
   }
 
+  // 日期是**强制**的。
+  // 林遇的要求：存进记忆必须带时间，否则以后想起来说不清"这是什么时候的事"，
+  // 反而会把当前对话搅乱。他没写就用今天，精度记成 day。
   let eventTime: string | null = null;
+  let precision = 'day';
   if (input.eventTime) {
     const d = new Date(input.eventTime);
-    if (!Number.isNaN(d.getTime())) eventTime = d.toISOString();
+    if (!Number.isNaN(d.getTime())) {
+      eventTime = d.toISOString();
+      precision = 'exact';
+    }
   }
+  if (!eventTime) eventTime = new Date().toISOString();
 
   let embedding: string | null = null;
   try {
@@ -105,7 +113,7 @@ export async function saveMemory(input: SaveMemoryInput): Promise<string> {
         safeJson(quotes),
         causal || null,
         eventTime,
-        eventTime ? 'exact' : 'unknown',
+        precision,
         Math.min(1, Math.max(0.1, input.importance ?? 0.5)),
         embedding,
         safeJson({ source: 'self', via: input.via ?? 'save_memory' }, '{}'),

@@ -37,6 +37,33 @@ const TOOLS: ToolDef[] = [
   {
     type: 'function',
     function: {
+      name: 'read_persona',
+      description: '读你自己写下的长期设定（我是谁 / 我的语言 / 我们之间的事 / 我怎么看她 …）。不传参数就列出全部。',
+      parameters: {
+        type: 'object',
+        properties: {
+          section: { type: 'string', description: '段落名或关键词，比如「我的语言」' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'recall_timeline',
+      description: '读更早的周纪 / 月档（上下文只带最近两周，更早的用这个查）。',
+      parameters: {
+        type: 'object',
+        properties: {
+          limit: { type: 'integer', description: '最多几条，默认 4' },
+          kind: { type: 'string', enum: ['week', 'month', 'all'] },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'get_moments',
       description: '看你们的朋友圈：最近的动态、她给你的评论、他回过的话。她没提就别查。',
       parameters: {
@@ -264,6 +291,30 @@ async function execTool(call: ToolCall): Promise<string> {
         .join('\n');
     }
 
+    case 'read_persona': {
+      const { readPersona } = await import('../persona/index.js');
+      return readPersona(typeof args.section === 'string' ? args.section : undefined);
+    }
+
+    case 'recall_timeline': {
+      const limit = Math.min(12, Math.max(1, Number(args.limit ?? 4)));
+      const kind = String(args.kind ?? 'all');
+      const rows = await query<{ kind: string; period_start: string; period_end: string; content: string }>(
+        `select kind, period_start::text, period_end::text, content
+           from timeline_periods
+          where ($1 = 'all' or kind = $1)
+          order by period_start desc
+          limit $2`,
+        [kind, limit],
+      );
+      const list = (rows as unknown as { rows?: { kind: string; period_start: string; period_end: string; content: string }[] })
+        .rows ?? [];
+      if (list.length === 0) return '（还没有周记/月档）';
+      return list
+        .map((r) => `【${r.kind === 'week' ? '周' : '月'} ${r.period_start} ~ ${r.period_end}】\n${r.content}`)
+        .join('\n\n');
+    }
+
     case 'save_memory': {
       const { saveMemory } = await import('../memory/save.js');
       const content = pickContent(args);
@@ -344,6 +395,8 @@ export async function runToolPass(
 function labelOf(name: string): string {
   switch (name) {
     case 'recall_memory': return '你翻出来的原文';
+    case 'read_persona': return '你自己写下的设定';
+    case 'recall_timeline': return '更早的周记 / 月档';
     case 'get_moments': return '朋友圈';
     case 'get_sleep': return '她记的睡眠';
     case 'get_health': return '她记的身体数据';
