@@ -18,6 +18,7 @@ export interface SelfActivity {
 
 export async function selfActivityLines(hours = 24): Promise<string[]> {
   const lines: string[] = [];
+  const MAX = 7; // 别把这一块也变成告示墙
 
   try {
     const wakes = await many<{ decision: string | null; created_at: string; actions: unknown }>(
@@ -27,15 +28,15 @@ export async function selfActivityLines(hours = 24): Promise<string[]> {
     );
     const acted = wakes.filter((w) => w.decision && w.decision !== 'stay_quiet');
     if (acted.length > 0) {
-      const tail = acted.slice(-4);
-      for (const w of tail) {
+      // 只报最后两次 + 总数，不逐条列
+      for (const w of acted.slice(-2)) {
         const t = new Date(w.created_at);
         const hh = String(t.getHours()).padStart(2, '0');
         const mm = String(t.getMinutes()).padStart(2, '0');
         const acts = Array.isArray(w.actions) ? (w.actions as string[]).join('/') : '';
         lines.push(`· ${hh}:${mm} 醒来过（${acts || w.decision}）`);
       }
-      if (acted.length > tail.length) lines.push(`· 还有 ${acted.length - tail.length} 次，没列`);
+      if (acted.length > 2) lines.push(`· 今天一共醒来 ${acted.length} 次，其余没列`);
     }
   } catch {
     /* 无所谓 */
@@ -45,14 +46,14 @@ export async function selfActivityLines(hours = 24): Promise<string[]> {
     const sent = await many<{ content: string; sent_at: string | null; created_at: string }>(
       `select content, sent_at, created_at from outbox
         where kind = 'message' and created_at > now() - interval '1 day'
-        order by created_at asc limit 4`,
+        order by created_at desc limit 2`,
     );
-    for (const s of sent) {
+    for (const s of sent.reverse()) {
       const t = new Date(s.sent_at ?? s.created_at);
       const hh = String(t.getHours()).padStart(2, '0');
       const mm = String(t.getMinutes()).padStart(2, '0');
-      const text = s.content.replace(/\s+/g, ' ').slice(0, 40);
-      lines.push(`· ${hh}:${mm} 你主动给她发过：「${text}」`);
+      const text = s.content.replace(/\s+/g, ' ').slice(0, 30);
+      lines.push(`· ${hh}:${mm} 你主动发过：「${text}」`);
     }
   } catch {
     /* 无所谓 */
@@ -62,15 +63,15 @@ export async function selfActivityLines(hours = 24): Promise<string[]> {
     const moments = await many<{ content: string; created_at: string }>(
       `select content, created_at from moments
         where author = 'self' and deleted_at is null and created_at > now() - interval '1 day'
-        order by created_at asc limit 3`,
+        order by created_at desc limit 1`,
     );
     for (const m of moments) {
-      const text = m.content.replace(/\s+/g, ' ').slice(0, 40);
+      const text = m.content.replace(/\s+/g, ' ').slice(0, 30);
       lines.push(`· 发过一条动态：「${text}」`);
     }
   } catch {
     /* 无所谓 */
   }
 
-  return lines;
+  return lines.slice(0, MAX);
 }

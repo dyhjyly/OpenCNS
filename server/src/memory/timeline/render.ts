@@ -57,7 +57,7 @@ export async function getTimelineLines(): Promise<string[]> {
 
     // 最近两周，各压到 160 字
     for (const w of weeks.slice(0, 2)) {
-      lines.push(`· ${w.period_start.slice(5)}~${w.period_end.slice(5)}：${clip(w.content, 160)}`);
+      lines.push(`${w.period_start.slice(5)}~${w.period_end.slice(5)}：${clip(w.content, 160)}`);
     }
 
     // 更早的不展开，只报个数
@@ -70,7 +70,7 @@ export async function getTimelineLines(): Promise<string[]> {
         const oldest = months[months.length - 1];
         bits.push(`${olderMonths} 个月档${oldest ? `（最早 ${oldest.period_start.slice(0, 7)}）` : ''}`);
       }
-      lines.push(`· 再往前还有 ${bits.join('、')}——要看就用 recall_timeline，别凭印象说。`);
+      lines.push(`再往前还有 ${bits.join('、')}——要看就用 recall_timeline，别凭印象说。`);
     }
   } catch (err) {
     log.warn('时间树读取失败（不影响对话）', { error: (err as Error).message });
