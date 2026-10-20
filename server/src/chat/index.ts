@@ -213,6 +213,7 @@ async function prepareTurn(req: ChatRequest): Promise<PreparedTurn> {
     const block = ['【今天你自己做过的事】（这些是你做的，不是她说的）', ...selfActs].join('\n');
     contextBlock = contextBlock ? `${contextBlock}\n\n${block}` : block;
   }
+  log.info('自己的近况', { lines: selfActs.length });
 
   const toolPass = await runToolPass(
     [

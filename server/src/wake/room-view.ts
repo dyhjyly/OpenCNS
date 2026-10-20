@@ -126,14 +126,16 @@ export async function getWakeRoom(limit = 20): Promise<WakeRoomView> {
   ).catch(() => []);
 
   /*
-   * 日记：他凌晨在「记忆时间」里写下的东西。
-   * 用 provenance.via = 'nightly' 认，这样和聊天里随手记的分得开。
+   * 日记：他自己写下的东西。
+   *
+   * 认 provenance.source = 'self'（凌晨的记忆时间写的、聊天里让他记的都算），
+   * via 用来区分是哪条路写的：nightly=凌晨日记，save_memory=对话里记的，wake=醒来自动记的。
    */
   const diaries = await many<{ id: string; at: string; kind: string; content: string }>(
     `select id::text, ingested_at as at, kind, content
        from memory_items
-      where state = 'active' and provenance->>'via' = 'nightly'
-      order by ingested_at desc limit 20`,
+      where state = 'active' and provenance->>'source' = 'self'
+      order by ingested_at desc limit 30`,
   ).catch(() => []);
 
   return {
