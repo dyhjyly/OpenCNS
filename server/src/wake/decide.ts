@@ -346,7 +346,7 @@ export async function decideAndAct(input: {
             const { appendMessage } = await import('../chat/store.js');
             const sessionId =
               (await one<{ id: string }>(
-                `select id::text from sessions order by coalesce(last_active_at, started_at) desc limit 1`,
+                `select id::text from sessions order by last_activity_at desc nulls last, started_at desc limit 1`,
               ))?.id ?? null;
             if (sessionId) {
               await appendMessage(sessionId, 'assistant', a.message, {
@@ -490,7 +490,13 @@ export async function decideAndAct(input: {
     const said = actTypes.map(describe).filter((x): x is string => Boolean(x));
     // 一次醒来最多落一条括注，不要刷屏
     const narration = said.length > 0 ? said.join('，') : '';
-    if (narration || experienceText) {
+    const hasReachOut = actionNames.includes('reach_out');
+    /*
+     * 只有 reach_out 的时候**不用再补括注** —— 那条消息本身就是记录，
+     * 再补一句"我给她发了消息"会变成自我复述。
+     * 只有在别的事（发动态/做东西/藏惊喜/拍她…）发生时，才补一条括注。
+     */
+    if (narration) {
       try {
         const { appendMessage } = await import('../chat/store.js');
         const sessionId =
@@ -498,8 +504,7 @@ export async function decideAndAct(input: {
             `select id::text from sessions order by last_activity_at desc nulls last, started_at desc limit 1`,
           ))?.id ?? null;
         if (sessionId) {
-          const body = narration ? `（${narration}。）` : `（${experienceText}）`;
-          await appendMessage(sessionId, 'assistant', body, {
+          await appendMessage(sessionId, 'assistant', `（${narration}。）`, {
             source: 'wake',
             kind: 'wake_act',
             decision,
@@ -509,6 +514,8 @@ export async function decideAndAct(input: {
       } catch (err) {
         log.warn('把醒来动作写进对话流失败（不影响其他）', errFields(err));
       }
+    } else if (hasReachOut) {
+      log.debug('这次只有 reach_out，消息本身已在对话里，不补括注');
     }
   }
 
