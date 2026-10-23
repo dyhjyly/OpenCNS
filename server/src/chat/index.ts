@@ -375,6 +375,16 @@ async function prepareTurn(req: ChatRequest & { dryRun?: boolean }): Promise<Pre
   };
 }
 
+/**
+ * 去掉回复开头模仿出来的时间戳。
+ *
+ * 实测副作用：上下文里每条历史都带 `[10-23 10:12]` 前缀之后，
+ * 模型开始在自己的回复里也写一遍 —— 存进库就变成了脏数据。
+ */
+function stripLeadingStamp(s: string): string {
+  return s.replace(/^\s*[\[（(]?\d{1,2}-\d{1,2}\s+\d{1,2}:\d{2}[\]）)]?\s*/u, '').trimStart();
+}
+
 /** 共同的收尾：落库回复、派生后台任务、记日志 */
 async function finalizeTurn(
   turn: PreparedTurn,
@@ -382,7 +392,7 @@ async function finalizeTurn(
   timing: { llmMs: number; firstTokenMs?: number },
   reasoning?: string,
 ): Promise<ChatResponse> {
-  await appendMessage(turn.sessionId, 'assistant', reply, {
+  await appendMessage(turn.sessionId, 'assistant', stripLeadingStamp(reply), {
     source: 'chat',
     recalledIds: turn.recall.recalled.map((r) => r.id),
     // 思考链一起存：刷新之后还能展开看当时在想什么

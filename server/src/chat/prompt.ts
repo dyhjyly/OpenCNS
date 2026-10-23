@@ -165,5 +165,11 @@ export function buildContextBlock(input: ContextBlockInput): string {
   }
 
   if (parts.length === 0) return '';
-  return ['以下是这一轮的背景，不是她刚说的话。', '', ...parts].join('\n');
+  return [
+    '以下是这一轮的背景，不是她刚说的话。',
+    '（历史消息前面的 [MM-DD HH:mm] 是系统加的时间标记，用来让你知道那是什么时候说的；',
+    '你自己说话的时候不要写这种时间标记。）',
+    '',
+    ...parts,
+  ].join('\n');
 }
