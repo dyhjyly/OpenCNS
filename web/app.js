@@ -428,7 +428,7 @@ async function pageChat() {
 
   main.innerHTML = `
     <div class="chat-wrap">
-      <div class="chat-aura" aria-hidden="true"><i class="a1"></i><i class="a2"></i><i class="a3"></i></div>
+      <div class="chat-aura" aria-hidden="true"><i></i></div>
       <div class="chat-log" id="chatLog"></div>
       <div class="attach-strip" id="attachStrip" hidden></div>
       <form class="chat-form" id="chatForm">
@@ -2891,41 +2891,95 @@ async function promptInstall() {
   $('#fab').addEventListener('click', () => go('chat'));
   $('#back').addEventListener('click', () => go('home'));
 
-  /* 抽屉：点遮罩关掉；从左边缘往右划打开；在抽屉上往左划关掉 */
+  /*
+   * 抽屉：跟手拖动。
+   *
+   * 第一版是"手指抬起时一次性跳出来"（只在 touchend 判断阈值），
+   * 所以感觉一顿一顿的、不像在自己动。现在改成拖动过程中实时跟手，
+   * 松手再决定是收回还是弹开。
+   */
   const mask = $('#drawerMask');
+  const drawerEl = $('#drawer');
   if (mask) mask.addEventListener('click', () => closeDrawer());
 
-  let edgeX = null;
-  let edgeY = null;
+  const drawerWidth = () => (drawerEl ? drawerEl.getBoundingClientRect().width || 280 : 280);
+
+  /** 把抽屉挪到 0~1 的进度上（1 = 完全展开） */
+  function setDragProgress(p) {
+    if (!drawerEl) return;
+    const v = Math.max(0, Math.min(1, p));
+    drawerEl.style.transform = `translateX(${(v - 1) * 100}%)`;
+    if (mask) {
+      mask.hidden = false;
+      mask.style.opacity = String(v);
+    }
+  }
+
+  let drag = null; // { startX, startY, mode: 'open' | 'close', moved: boolean }
+
   document.addEventListener(
     'touchstart',
     (e) => {
       const t = e.touches[0];
       if (!t) return;
-      edgeX = t.clientX;
-      edgeY = t.clientY;
-    },
-    { passive: true },
-  );
-  document.addEventListener(
-    'touchend',
-    (e) => {
-      const t = e.changedTouches[0];
-      if (!t || edgeX === null) return;
-      const dx = t.clientX - edgeX;
-      const dy = Math.abs(t.clientY - (edgeY ?? t.clientY));
-      edgeX = null;
-      edgeY = null;
-      if (dy > Math.abs(dx) || Math.abs(dx) < 60) return; // 以横划为主
-      if (!drawerOpen && dx > 0) {
-        const fromEdge = t.clientX - dx < 40; // 起点贴着左边缘
-        if (fromEdge) openDrawer();
-      } else if (drawerOpen && dx < -60) {
-        closeDrawer();
+      if (!drawerOpen && t.clientX <= 28) {
+        // 从左边缘起手：准备拉开
+        drag = { startX: t.clientX, startY: t.clientY, mode: 'open', moved: false };
+        if (drawerEl) drawerEl.classList.add('dragging');
+        setDragProgress(0);
+      } else if (drawerOpen && drawerEl && drawerEl.contains(e.target)) {
+        // 抽屉开着、手指在抽屉上：准备推回去
+        drag = { startX: t.clientX, startY: t.clientY, mode: 'close', moved: false };
+        drawerEl.classList.add('dragging');
       }
     },
     { passive: true },
   );
+
+  document.addEventListener(
+    'touchmove',
+    (e) => {
+      if (!drag) return;
+      const t = e.touches[0];
+      if (!t) return;
+      const dx = t.clientX - drag.startX;
+      const dy = t.clientY - drag.startY;
+
+      // 竖向为主就放弃这次拖动（让她正常滚页面）
+      if (!drag.moved) {
+        if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > 8) {
+          drag = null;
+          if (drawerEl) drawerEl.classList.remove('dragging');
+          setDragProgress(drawerOpen ? 1 : 0);
+          return;
+        }
+        if (Math.abs(dx) < 4) return;
+        drag.moved = true;
+      }
+
+      if (drag.mode === 'open') setDragProgress(dx / drawerWidth());
+      else setDragProgress(1 + dx / drawerWidth());
+    },
+    { passive: true },
+  );
+
+  function endDrag() {
+    if (!drag) return;
+    if (drawerEl) {
+      // 松手前先读出当前进度，决定弹开还是收回
+      const m = /translateX\(([-\d.]+)%\)/.exec(drawerEl.style.transform || '');
+      const pct = m ? 1 + Number(m[1]) / 100 : drawerOpen ? 1 : 0;
+      drawerEl.classList.remove('dragging');
+      drawerEl.style.transform = '';
+      if (mask) mask.style.opacity = '';
+      if (pct > 0.35) openDrawer();
+      else closeDrawer();
+    }
+    drag = null;
+  }
+
+  document.addEventListener('touchend', endDrag, { passive: true });
+  document.addEventListener('touchcancel', endDrag, { passive: true });
 
   window.addEventListener('hashchange', () => {
     const page = location.hash.replace('#', '') || 'home';
