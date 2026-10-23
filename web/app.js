@@ -1146,17 +1146,29 @@ let star = null; // 星图运行态
 /* ─────────── 记忆审核 ─────────── */
 /**
  * 他写下的记忆先落在这里，等她看过才进正式记忆库。
- * 一眼能回答"他到底存进去了没有"。
+ *
+ * 注意：整页必须套一个根容器（.mrv）。
+ * 踩过的坑：直接把几块塞进 #main，那几块会被当成 flex 行项目拉成长条，
+ * 标题被挤成竖排（截图里那个样子）。
  */
+const MEMORY_FORMAT = {
+  kind: 'episode | semantic | experience | reflection',
+  content: '第一人称写的正文（必填）',
+  event_time: 'YYYY-MM-DD',
+  quotes: '[{ "who": "human|self", "text": "原句" }]',
+  causal: '为什么重要（episode 必填）',
+  importance: '0~1',
+};
+
 async function pageMemoryReview(status = 'pending') {
   const main = $('#main');
-  main.innerHTML = '<div class="empty">读取中…</div>';
+  main.innerHTML = '<div class="mrv"><div class="empty">读取中…</div></div>';
 
   let d;
   try {
     d = await api(`/memory/drafts?status=${status}&limit=60`);
   } catch (err) {
-    main.innerHTML = `<div class="empty">读不到（${esc(err.message)}）</div>`;
+    main.innerHTML = `<div class="mrv"><div class="empty">读不到（${esc(err.message)}）</div></div>`;
     return;
   }
 
@@ -1164,9 +1176,24 @@ async function pageMemoryReview(status = 'pending') {
   const viaName = { save_memory: '对话里记的', nightly: '凌晨写的' };
 
   main.innerHTML = `
+  <div class="mrv">
     <div class="subhead"><button class="mini" id="rvBack">← 记忆库</button><span>记忆审核</span></div>
 
-    <div class="rv-tabs">
+    <details class="mrv-fmt">
+      <summary>他存记忆的格式（哪里不对可以直接在下面改）</summary>
+      <pre>{
+  "kind": "${MEMORY_FORMAT.kind}",
+  "content": "${MEMORY_FORMAT.content}",
+  "event_time": "${MEMORY_FORMAT.event_time}",
+  "quotes": ${MEMORY_FORMAT.quotes},
+  "causal": "${MEMORY_FORMAT.causal}",
+  "importance": "${MEMORY_FORMAT.importance}"
+}</pre>
+      <p>episode 必须同时有 quotes 和 causal，正文 ≥80 字；只想留一句话就用 semantic。
+      没给日期会自动用当天。存进来的一律先落在待审，你点「通过」才进记忆库。</p>
+    </details>
+
+    <div class="mrv-tabs">
       ${[['pending', `待审 ${d.pending}`], ['approved', '已通过'], ['rejected', '已驳回'], ['all', '全部']]
         .map(([k, label]) => `<button class="mini ${status === k ? '' : 'ghost'}" data-st="${k}">${label}</button>`)
         .join('')}
@@ -1175,52 +1202,62 @@ async function pageMemoryReview(status = 'pending') {
     ${d.drafts.length === 0
       ? `<div class="empty">${status === 'pending' ? '没有待审的记忆。他存的东西会出现在这里。' : '这里还没有记录。'}</div>`
       : d.drafts.map((x) => `
-        <section class="card ornate" data-draft="${x.id}">
-          <div class="draft-top">
-            <span class="draft-kind">${esc(kindName[x.kind] || x.kind)}</span>
-            <span class="draft-via">${esc(viaName[x.via] || x.via)}</span>
-            <span class="draft-when">${x.eventTime ? String(x.eventTime).slice(0, 10) : '没有日期'}</span>
-            ${x.status !== 'pending' ? `<span class="draft-st">${x.status === 'approved' ? '已通过' : '已驳回'}</span>` : ''}
+        <section class="card ornate mrv-item" data-draft="${x.id}">
+          <div class="mrv-top">
+            <span class="mrv-kind">${esc(kindName[x.kind] || x.kind)}</span>
+            <span class="mrv-via">${esc(viaName[x.via] || x.via)}</span>
+            <span class="mrv-st">${x.status === 'pending' ? '待审' : x.status === 'approved' ? '已通过' : '已驳回'}</span>
           </div>
-          <div class="draft-body">${esc(x.content)}</div>
-          ${x.causal ? `<div class="draft-meta">因果：${esc(x.causal)}</div>` : ''}
-          ${Array.isArray(x.quotes) && x.quotes.length
-            ? `<div class="draft-quote">${x.quotes.map((q) => `「${esc(q.text || '')}」`).join(' ')}</div>` : ''}
+
           ${x.status === 'pending' ? `
-            <div class="draft-acts">
-              <button class="mini" data-ok="${x.id}">收下</button>
-              <button class="mini ghost" data-edit="${x.id}">改一下再收</button>
+            <div class="mrv-form">
+              <label>类型
+                <select data-f="kind">
+                  ${['semantic', 'experience', 'reflection', 'episode'].map((k) =>
+                    `<option value="${k}" ${x.kind === k ? 'selected' : ''}>${k === 'semantic' ? '一件事' : k === 'experience' ? '经历' : k === 'reflection' ? '想法' : '一段对话'}</option>`).join('')}
+                </select>
+              </label>
+              <label>日期 <input type="date" data-f="date" value="${x.eventTime ? String(x.eventTime).slice(0, 10) : ''}" /></label>
+              <label>重要度 <input type="number" data-f="imp" min="0.1" max="1" step="0.1" value="${x.importance}" /></label>
+            </div>
+            <textarea class="mrv-content" data-f="content" rows="4">${esc(x.content)}</textarea>
+          ` : `
+            <div class="mrv-body">${esc(x.content)}</div>
+          `}
+
+          ${x.causal ? `<div class="mrv-meta">因果：${esc(x.causal)}</div>` : ''}
+          ${Array.isArray(x.quotes) && x.quotes.length
+            ? `<div class="mrv-quote">${x.quotes.map((q) => `「${esc(q.text || '')}」`).join(' ')}</div>` : ''}
+
+          ${x.status === 'pending' ? `
+            <div class="mrv-acts">
+              <button class="mini" data-ok="${x.id}">通过，进记忆库</button>
               <button class="mini ghost" data-no="${x.id}">不要</button>
             </div>` : ''}
         </section>`).join('')}
-  `;
+  </div>`;
 
-  $('#rvBack').addEventListener('click', () => { go('memory'); });
+  const back = $('#rvBack');
+  if (back) back.addEventListener('click', () => go('memory'));
   main.querySelectorAll('[data-st]').forEach((b) =>
     b.addEventListener('click', () => pageMemoryReview(b.dataset.st)));
 
   main.querySelectorAll('[data-ok]').forEach((b) =>
     b.addEventListener('click', async () => {
-      try {
-        const r = await api(`/memory/drafts/${b.dataset.ok}/approve`, { method: 'POST', body: '{}' });
-        toast(r.ok ? '收下了，进记忆库了' : `没收下：${r.error}`, 2000);
-        pageMemoryReview(status);
-      } catch (err) { toast('失败：' + err.message, 2400); }
-    }));
-
-  main.querySelectorAll('[data-edit]').forEach((b) =>
-    b.addEventListener('click', async () => {
       const card = b.closest('[data-draft]');
-      const cur = card.querySelector('.draft-body').textContent;
-      const text = prompt('改成什么样？', cur);
-      if (text === null) return;
-      const day = prompt('日期（YYYY-MM-DD，不改就留空）', '');
+      const q = (name) => card.querySelector(`[data-f="${name}"]`);
+      const body = {
+        kind: q('kind')?.value,
+        content: q('content')?.value,
+        eventTime: q('date')?.value || undefined,
+        importance: Number(q('imp')?.value || 0.5),
+      };
       try {
-        const r = await api(`/memory/drafts/${b.dataset.edit}/approve`, {
+        const r = await api(`/memory/drafts/${b.dataset.ok}/approve`, {
           method: 'POST',
-          body: JSON.stringify({ content: text, eventTime: day && day.trim() ? day.trim() : undefined }),
+          body: JSON.stringify(body),
         });
-        toast(r.ok ? '改好并收下了' : `没收下：${r.error}`, 2200);
+        toast(r.ok ? '通过了，进记忆库了' : `没通过：${r.error}`, 2200);
         pageMemoryReview(status);
       } catch (err) { toast('失败：' + err.message, 2400); }
     }));

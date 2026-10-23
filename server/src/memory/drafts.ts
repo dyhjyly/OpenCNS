@@ -90,7 +90,7 @@ export async function pendingCount(): Promise<number> {
 /** 批准：可以顺手改内容，然后真正插进 memory_items */
 export async function approveDraft(
   id: string,
-  patch?: { content?: string; eventTime?: string; kind?: string },
+  patch?: { content?: string; eventTime?: string; kind?: string; importance?: number },
 ): Promise<{ ok: boolean; memoryId?: string; error?: string }> {
   const d = await one<{
     id: string;
@@ -112,6 +112,11 @@ export async function approveDraft(
   const kind = patch?.kind && ['episode', 'semantic', 'experience', 'reflection'].includes(patch.kind) ? patch.kind : d.kind;
   const content = (patch?.content ?? d.content).trim();
   if (!content) return { ok: false, error: '内容不能为空' };
+
+  const importance =
+    typeof patch?.importance === 'number' && Number.isFinite(patch.importance)
+      ? Math.min(1, Math.max(0.1, patch.importance))
+      : Number(d.importance);
 
   let eventTime: string | null = d.event_time;
   if (patch?.eventTime) {
@@ -144,7 +149,7 @@ export async function approveDraft(
         d.causal,
         eventTime,
         eventTime ? 'exact' : 'day',
-        Number(d.importance),
+        importance,
         vec,
         JSON.stringify({ source: 'self', via: 'approved_draft' }),
       ],

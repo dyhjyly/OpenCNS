@@ -774,7 +774,7 @@ export function startHttpServer(): Server {
   app.post('/memory/drafts/:id/approve', requireToken, async (req, res) => {
     try {
       const { approveDraft } = await import('../memory/drafts.js');
-      const b = (req.body ?? {}) as { content?: string; eventTime?: string; kind?: string };
+      const b = (req.body ?? {}) as { content?: string; eventTime?: string; kind?: string; importance?: number };
       const out = await approveDraft(String(req.params.id), b);
       return res.status(out.ok ? 200 : 400).json(out);
     } catch (err) {
