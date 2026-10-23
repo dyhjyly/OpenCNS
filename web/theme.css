@@ -815,7 +815,14 @@ body.memory-mode .main { min-height: 0; overflow: hidden; display: flex; }
   margin-top: auto; padding: 10px 12px 0;
   font-size: 11px; color: var(--muted); line-height: 1.7;
 }
-.apphead-slot.as-menu { cursor: pointer }
+.apphead-slot {
+  /* 这颗小圆是按钮，不是可选中的文字 */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  cursor: pointer;
+}
 
 /* ═══════════════ 聊天的呼吸背景 ═══════════════ */
 .chat-aura {

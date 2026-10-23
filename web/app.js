@@ -670,7 +670,7 @@ async function pageChat() {
     }
   });
 
-  // 双击头部那颗小圆 = 拍一拍
+  // 长按头部那颗小圆 = 拍一拍（聊天页才生效）
   function doPat() {
     const suffix = localStorage.getItem('pat.suffix') || '';
     void api('/pat', {
@@ -681,42 +681,10 @@ async function pageChat() {
       .catch((err) => toast('拍拍失败：' + err.message, 2400));
     if (navigator.vibrate) navigator.vibrate(12);
   }
+  // 启动时挂的处理器在别的作用域，用这个把手伸进来
+  window.__pat = doPat;
 
-  const avatar = $('#headSlot');
-  if (avatar) {
-    avatar.style.cursor = 'pointer';
-    let lastTapAt = 0;
-    let holdTimer = 0;
-    let held = false;
 
-    // 单击开抽屉；长按（600ms）在聊天页是拍一拍
-    avatar.addEventListener('pointerdown', () => {
-      held = false;
-      holdTimer = window.setTimeout(() => {
-        held = true;
-        if (currentPage === 'chat') {
-          doPat();
-          if (navigator.vibrate) navigator.vibrate(16);
-        }
-      }, 600);
-    });
-    avatar.addEventListener('pointerup', () => {
-      window.clearTimeout(holdTimer);
-    });
-    avatar.addEventListener('pointercancel', () => {
-      window.clearTimeout(holdTimer);
-    });
-    avatar.addEventListener('click', () => {
-      if (held) {
-        held = false;
-        return; // 长按已经处理过，不再开抽屉
-      }
-      const now = Date.now();
-      lastTapAt = now;
-      if (drawerOpen) closeDrawer();
-      else openDrawer();
-    });
-  }
 
   // 进页面不自动聚焦（手机上会立刻弹键盘）
   if (!isTouch) input.focus();
@@ -2910,9 +2878,29 @@ async function promptInstall() {
     const v = Math.max(0, Math.min(1, p));
     drawerEl.style.transform = `translateX(${(v - 1) * 100}%)`;
     if (mask) {
-      mask.hidden = false;
-      mask.style.opacity = String(v);
+      // 只在真的拉开一点之后才让遮罩出现。
+      // 踩过的坑：透明度 0 也照样能吃掉点击，一旦漏关就整页点不动。
+      if (v > 0.02) {
+        mask.hidden = false;
+        mask.style.opacity = String(v);
+      } else {
+        mask.style.opacity = '';
+        mask.hidden = true;
+      }
     }
+  }
+
+  /** 放弃这次拖动：把抽屉和遮罩都还原干净 */
+  function abortDrag() {
+    if (drawerEl) {
+      drawerEl.classList.remove('dragging');
+      drawerEl.style.transform = '';
+    }
+    if (mask) {
+      mask.style.opacity = '';
+      if (!drawerOpen) mask.hidden = true;
+    }
+    drag = null;
   }
 
   let drag = null; // { startX, startY, mode: 'open' | 'close', moved: boolean }
@@ -2922,13 +2910,15 @@ async function promptInstall() {
     (e) => {
       const t = e.touches[0];
       if (!t) return;
+      // 顶栏里的东西（最主要就是左上角那颗小圆）不参与划动，
+      // 否则轻点头像会被当成"从左边缘起划"，抽屉打不开还挡掉点击。
+      if (e.target instanceof Element && e.target.closest('.apphead')) return;
+
       if (!drawerOpen && t.clientX <= 28) {
-        // 从左边缘起手：准备拉开
         drag = { startX: t.clientX, startY: t.clientY, mode: 'open', moved: false };
         if (drawerEl) drawerEl.classList.add('dragging');
         setDragProgress(0);
       } else if (drawerOpen && drawerEl && drawerEl.contains(e.target)) {
-        // 抽屉开着、手指在抽屉上：准备推回去
         drag = { startX: t.clientX, startY: t.clientY, mode: 'close', moved: false };
         drawerEl.classList.add('dragging');
       }
@@ -2948,9 +2938,7 @@ async function promptInstall() {
       // 竖向为主就放弃这次拖动（让她正常滚页面）
       if (!drag.moved) {
         if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > 8) {
-          drag = null;
-          if (drawerEl) drawerEl.classList.remove('dragging');
-          setDragProgress(drawerOpen ? 1 : 0);
+          abortDrag();
           return;
         }
         if (Math.abs(dx) < 4) return;
@@ -2980,6 +2968,42 @@ async function promptInstall() {
 
   document.addEventListener('touchend', endDrag, { passive: true });
   document.addEventListener('touchcancel', endDrag, { passive: true });
+
+  /*
+   * 左上角那颗小圆：点一下开/关抽屉，长按 600ms 在聊天页是拍一拍。
+   *
+   * 挂在启动时、只挂一次。
+   * 之前误挂在 pageChat 里，结果只有聊天页能开抽屉，其它页面点了没反应。
+   */
+  const avatarBtn = $('#headSlot');
+  if (avatarBtn) {
+    avatarBtn.style.cursor = 'pointer';
+    let holdTimer = 0;
+    let longPressed = false;
+
+    avatarBtn.addEventListener('pointerdown', () => {
+      longPressed = false;
+      holdTimer = window.setTimeout(() => {
+        longPressed = true;
+        if (currentPage === 'chat' && typeof window.__pat === 'function') {
+          window.__pat();
+          if (navigator.vibrate) navigator.vibrate(16);
+        }
+      }, 600);
+    });
+    avatarBtn.addEventListener('pointerup', () => window.clearTimeout(holdTimer));
+    avatarBtn.addEventListener('pointercancel', () => window.clearTimeout(holdTimer));
+    avatarBtn.addEventListener('pointerleave', () => window.clearTimeout(holdTimer));
+
+    avatarBtn.addEventListener('click', () => {
+      if (longPressed) {
+        longPressed = false;
+        return;
+      }
+      if (drawerOpen) closeDrawer();
+      else openDrawer();
+    });
+  }
 
   window.addEventListener('hashchange', () => {
     const page = location.hash.replace('#', '') || 'home';
