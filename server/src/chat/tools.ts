@@ -353,7 +353,7 @@ async function execTool(call: ToolCall): Promise<string> {
  * 组装这一轮可用的工具：内置的 + 她手动连上的 MCP 服务器提供的。
  * MCP 工具名统一成 mcp__<server8>__<tool>，回调时再解析回去。
  */
-async function buildToolList(): Promise<ToolDef[]> {
+export async function buildToolList(): Promise<ToolDef[]> {
   const out: ToolDef[] = [...TOOLS];
   try {
     const { listServers, mcpToolName } = await import('../mcp/index.js');

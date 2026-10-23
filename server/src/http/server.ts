@@ -109,6 +109,21 @@ export function startHttpServer(): Server {
    * 不调模型、不写库。她想看"他到底收到了什么"，就不用再猜了。
    * 用法：GET /admin/context?q=随便一句话
    */
+  /** 他现在手上有哪些工具（内置 + MCP） */
+  app.get('/admin/tools', requireToken, async (_req, res) => {
+    try {
+      const { buildToolList } = await import('../chat/tools.js');
+      const list = await buildToolList();
+      return res.json({
+        ok: true,
+        count: list.length,
+        tools: list.map((t) => ({ name: t.function.name, description: t.function.description })),
+      });
+    } catch (err) {
+      return res.status(500).json(errFields(err));
+    }
+  });
+
   app.get('/admin/context', requireToken, async (req, res) => {
     try {
       const { previewContext } = await import('../chat/index.js');
