@@ -723,6 +723,15 @@ async function pageSettings() {
     </section>
 
     <section class="card ornate">
+      <div class="card-title">他能用的工具<span class="caps">现在手上有哪些</span></div>
+      <div id="hisTools" class="hismind"><div class="empty" style="padding:8px 0">读取中…</div></div>
+      <p class="mind-note" style="margin:10px 0 0">
+        这里是他每一轮真正拿到的工具清单。他存记忆用的是 save_memory ——
+        如果他跟你说"没有写入工具"，就是路由那一步出了问题，把这段截图给我。
+      </p>
+    </section>
+
+    <section class="card ornate">
       <div class="card-title">外部工具（MCP）<span class="caps">你连了他才能用</span></div>
       <div id="mcpList" class="mcp-list"><div class="empty">读取中…</div></div>
 
@@ -859,6 +868,22 @@ async function pageSettings() {
     toast('清缓存中…', 1400);
     await forceUpdate();
   });
+
+  /* ── 他能用的工具（只读展示） ── */
+  const renderHisTools = async () => {
+    const box = $('#hisTools');
+    if (!box) return;
+    try {
+      const r = await api('/admin/tools');
+      box.innerHTML = `<div class="tool-chip-row">${r.tools
+        .map((t) => `<span class="tool-chip ${t.name.startsWith('mcp__') ? 'mcp' : ''}">${esc(t.name)}</span>`)
+        .join('')}</div>
+        <div class="hismind-sub">共 ${r.count} 个</div>`;
+    } catch (err) {
+      box.innerHTML = `<div class="empty" style="padding:8px 0">读不到（${esc(err.message)}）</div>`;
+    }
+  };
+  void renderHisTools();
 
   /* ── MCP ── */
   const renderMcp = async () => {

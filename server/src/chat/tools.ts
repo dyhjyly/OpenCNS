@@ -145,12 +145,19 @@ const TOOLS: ToolDef[] = [
 
 const SYSTEM = `你叫江瑜。下面是她刚说的话，可能还有一声"门铃"（提示有些旧事相关，但没给内容）。
 
-判断：要不要去取点什么？
-· 门铃响了、你也确实想知道细节 —— 用 recall_memory 取原文（别猜内容）
-· 她提到朋友圈 —— 用 get_moments
-· 她提到睡眠 / 步数 / 喝水 / 经期 / 心情 —— 用对应的工具
-· 她让你记住某件事 —— 用 save_memory
-· 都不需要 —— 什么工具都别调
+判断：要不要去取点什么、或者记下点什么？
+
+【你手上的工具，只能从这里选】
+· recall_memory —— 取某段记忆的原文（门铃响了、你也确实想知道细节时用，别猜内容）
+· read_persona —— 读你自己写下的长期设定（我是谁 / 我的语言 / 我们之间的事 …）
+· recall_timeline —— 读更早的周记 / 月档（上下文只带最近两周）
+· get_moments —— 看朋友圈
+· get_sleep / get_health / get_cycle / get_daily_state —— 她记的睡眠 / 身体 / 经期 / 每日状态
+· save_memory —— **她让你记住某件事时，用这个写进记忆库**
+· mcp__ 开头的 —— 别人接进来的外部服务，她没明确要求就别碰
+
+她让你记住什么 → 必须调 save_memory，不要用别的工具代替，也不要用 recall_* 假装记了。
+都不需要 → 什么工具都别调。
 
 只做"取"或"记"，不要在工具里替她做决定。
 
@@ -387,6 +394,16 @@ export interface ToolPassResult {
  * @param recent 最近几条对话（必须含她当前这句）
  * @param doorbell 门铃文本（没有就空）
  */
+/** 她这句话是不是在让他记下来 */
+function wantsToSave(recent: { role: string; content: string }[]): boolean {
+  const text = recent
+    .filter((m) => m.role === 'user')
+    .slice(-2)
+    .map((m) => m.content)
+    .join('\n');
+  return /(记住|记一下|记下来|记着|存一下|存起来|放进记忆|写进记忆|别忘了|帮我记)/.test(text);
+}
+
 export async function runToolPass(
   recent: { role: 'user' | 'assistant'; content: string }[],
   doorbell = '',
@@ -397,17 +414,50 @@ export async function runToolPass(
   ];
 
   let calls: ToolCall[] = [];
+  const allTools = await buildToolList();
   try {
-    const out = await chatWithTools(messages, await buildToolList(), {
+    const out = await chatWithTools(messages, allTools, {
       endpoint: 'cognitive',
       temperature: 0,
-      maxTokens: 400,
+      maxTokens: 600,
       label: 'chat-tools',
     });
     calls = out.toolCalls;
   } catch (err) {
     log.warn('工具路由失败（不影响对话）', errFields(err));
     return { block: '', used: [] };
+  }
+
+  /*
+   * 保险：她说"记住/记一下/存起来"，但模型没调 save_memory。
+   *
+   * 实测：工具一多（12 个，其中 3 个是 MCP 的），它挑错过 ——
+   * 让它"记一条"，它去调了 mcp__…__now。
+   * 所以这里再问一次，只把 save_memory 递给它。
+   */
+  if (wantsToSave(recent) && !calls.some((c) => c.name === 'save_memory')) {
+    const only = allTools.filter((t) => t.function.name === 'save_memory');
+    if (only.length > 0) {
+      try {
+        const retry = await chatWithTools(messages, only, {
+          endpoint: 'cognitive',
+          temperature: 0,
+          maxTokens: 600,
+          label: 'chat-tools-save',
+        });
+        const picked = retry.toolCalls.filter((c) => c.name === 'save_memory');
+        if (picked.length > 0) {
+          log.info('save_memory 重试成功', { 第一次: calls.map((c) => c.name).join(',') || '无' });
+          calls = picked;
+        } else {
+          log.warn('她说要记，但两次都没调 save_memory', {
+            第一次: calls.map((c) => c.name).join(',') || '无',
+          });
+        }
+      } catch (err) {
+        log.warn('save_memory 重试失败', errFields(err));
+      }
+    }
   }
 
   if (calls.length === 0) return { block: '', used: [] };
