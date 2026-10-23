@@ -133,13 +133,15 @@ export async function getWakeRoom(limit = 20): Promise<WakeRoomView> {
    * 现在只认 via='nightly' 的 reflection：夜里记忆时间写的那一篇。
    */
   const diaries = await many<{ id: string; at: string; kind: string; content: string }>(
-    `select id::text, ingested_at as at, kind, content
+    `select distinct on ((ingested_at at time zone 'Asia/Shanghai')::date)
+            id::text, ingested_at as at, kind, content
        from memory_items
       where state = 'active'
         and provenance->>'source' = 'self'
         and provenance->>'via' = 'nightly'
         and kind = 'reflection'
-      order by ingested_at desc limit 30`,
+      order by (ingested_at at time zone 'Asia/Shanghai')::date desc, length(content) desc
+      limit 30`,
   ).catch(() => []);
 
   return {
