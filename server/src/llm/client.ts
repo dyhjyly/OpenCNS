@@ -40,6 +40,11 @@ export interface ChatOptions {
   retries?: number;
   /** 记账用的标签，例如 'compress' / 'recall-judge' / 'reply' */
   label?: string;
+  /**
+   * 强制调用某个工具（tool_choice = function）。
+   * 用在"她明确让他记，但他没调 save_memory"这种必须落地的场合。
+   */
+  forceTool?: string;
 }
 
 type ResolvedEndpoint = LlmEndpoint & { label: string; effort?: string };
@@ -246,7 +251,9 @@ export async function chatWithTools(
     max_tokens: opts.maxTokens ?? 800,
     stream: false,
     tools,
-    tool_choice: 'auto',
+    tool_choice: opts.forceTool
+      ? { type: 'function', function: { name: opts.forceTool } }
+      : 'auto',
   };
   if (ep.effort) body.effort = ep.effort;
 

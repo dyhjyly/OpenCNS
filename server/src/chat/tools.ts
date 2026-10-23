@@ -444,6 +444,8 @@ export async function runToolPass(
           temperature: 0,
           maxTokens: 600,
           label: 'chat-tools-save',
+          // 她说得很明确，就别再让它自己判断了：强制调这个工具
+          forceTool: 'save_memory',
         });
         const picked = retry.toolCalls.filter((c) => c.name === 'save_memory');
         if (picked.length > 0) {
