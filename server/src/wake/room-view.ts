@@ -126,15 +126,19 @@ export async function getWakeRoom(limit = 20): Promise<WakeRoomView> {
   ).catch(() => []);
 
   /*
-   * 日记：他自己写下的东西。
+   * 日记：**每天凌晨写的那一篇**。
    *
-   * 认 provenance.source = 'self'（凌晨的记忆时间写的、聊天里让他记的都算），
-   * via 用来区分是哪条路写的：nightly=凌晨日记，save_memory=对话里记的，wake=醒来自动记的。
+   * 原来的条件太宽（source='self' 全收），结果把"我发了一条动态：…"这类
+   * 来自社交动作的经历也捞了进来 —— 她看到的"日记"里一半是动态。
+   * 现在只认 via='nightly' 的 reflection：夜里记忆时间写的那一篇。
    */
   const diaries = await many<{ id: string; at: string; kind: string; content: string }>(
     `select id::text, ingested_at as at, kind, content
        from memory_items
-      where state = 'active' and provenance->>'source' = 'self'
+      where state = 'active'
+        and provenance->>'source' = 'self'
+        and provenance->>'via' = 'nightly'
+        and kind = 'reflection'
       order by ingested_at desc limit 30`,
   ).catch(() => []);
 

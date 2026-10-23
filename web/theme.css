@@ -755,6 +755,19 @@ body.memory-mode .main { min-height: 0; overflow: hidden; display: flex; }
 .mom-cmt-row { font-size: var(--fs-small); line-height: 1.6 }
 .mom-cmt-row b { color: var(--accent); font-family: var(--f-title); margin-right: 6px }
 
+/* 朋友圈：管理模式的删除按钮 */
+.mom-del {
+  display: none;
+  position: absolute; top: 10px; right: 10px;
+  width: 26px; height: 26px; border-radius: 50%;
+  border: 1px solid var(--line); background: var(--card);
+  color: #C4556E; font-size: 15px; line-height: 1;
+  align-items: center; justify-content: center;
+  cursor: pointer;
+}
+body.mom-manage .mom-del { display: flex }
+body.mom-manage .mom-item { padding-top: 26px }
+
 /* ═══════════════ 左侧抽屉导航 ═══════════════ */
 .drawer-mask {
   position: fixed; inset: 0; z-index: 60;
@@ -834,27 +847,28 @@ body.memory-mode .main { min-height: 0; overflow: hidden; display: flex; }
 .chat-aura i {
   position: absolute; display: block;
   left: 50%; top: 50%;
-  width: 92vmin; height: 92vmin; border-radius: 50%;
+  width: 96vmin; height: 96vmin; border-radius: 50%;
   background: radial-gradient(circle at 50% 50%,
-    color-mix(in srgb, var(--accent) 22%, transparent) 0%,
-    color-mix(in srgb, var(--accent) 9%, transparent) 40%,
-    transparent 68%);
-  filter: blur(8px);
+    color-mix(in srgb, var(--accent) 42%, transparent) 0%,
+    color-mix(in srgb, var(--accent) 20%, transparent) 38%,
+    color-mix(in srgb, var(--accent) 7%, transparent) 62%,
+    transparent 78%);
+  filter: blur(10px);
   transform: translate(-50%, -50%) scale(.9);
   animation: aura-beat 4.8s ease-in-out infinite;
 }
 
 /* 一下"嘀—咚"：先收一下再放开，像心跳 */
 @keyframes aura-beat {
-  0%   { transform: translate(-50%, -50%) scale(.88); opacity: .34 }
-  12%  { transform: translate(-50%, -50%) scale(1.04); opacity: .62 }
-  24%  { transform: translate(-50%, -50%) scale(.97); opacity: .46 }
-  38%  { transform: translate(-50%, -50%) scale(1.01); opacity: .54 }
-  100% { transform: translate(-50%, -50%) scale(.88); opacity: .34 }
+  0%   { transform: translate(-50%, -50%) scale(.86); opacity: .55 }
+  12%  { transform: translate(-50%, -50%) scale(1.05); opacity: .95 }
+  24%  { transform: translate(-50%, -50%) scale(.97); opacity: .72 }
+  38%  { transform: translate(-50%, -50%) scale(1.01); opacity: .86 }
+  100% { transform: translate(-50%, -50%) scale(.86); opacity: .55 }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .chat-aura i { animation: none; opacity: .4 }
+  .chat-aura i { animation: none; opacity: .7 }
 }
 
 /* ═══════════════ MCP ═══════════════ */

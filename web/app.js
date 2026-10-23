@@ -995,7 +995,8 @@ async function pageMoments() {
   main.innerHTML = `
     <div class="mom-head">
       <span class="caps">两个人的朋友圈</span>
-      <button class="mini" id="momRefresh" style="margin-left:auto">刷新</button>
+      <button class="mini ghost" id="momManage" style="margin-left:auto">管理</button>
+      <button class="mini" id="momRefresh">刷新</button>
     </div>
 
     <div class="card ornate mom-compose">
@@ -1013,6 +1014,7 @@ async function pageMoments() {
         ? `<div class="soon"><span class="em">moment</span><p>他还没发过动态。<br/>等他下次醒来做点什么，可能就会出现在这里。</p></div>`
         : list.map((m) => `
           <article class="card ornate mom-item">
+            ${m.author === 'self' ? `<button class="mom-del" data-del="${m.id}" aria-label="删除这条">×</button>` : ''}
             <div class="mom-top">
               <span class="mom-who">${whoName(m.author)}</span>
               ${m.mood ? `<span class="mom-mood">${esc(m.mood)}</span>` : ''}
@@ -1034,6 +1036,31 @@ async function pageMoments() {
   `;
 
   $('#momRefresh').addEventListener('click', () => pageMoments());
+
+  /*
+   * 管理：把他发过的动态列出来，不要的可以删。
+   * 她想清掉"不重要"的那部分，所以删除只是软删（deleted_at），库里还留得住。
+   */
+  const manageBtn = $('#momManage');
+  if (manageBtn) {
+    manageBtn.addEventListener('click', () => {
+      const on = document.body.classList.toggle('mom-manage');
+      manageBtn.textContent = on ? '完成' : '管理';
+      manageBtn.classList.toggle('ghost', !on);
+      toast(on ? '点右上角的 × 删除' : '', 1600);
+    });
+  }
+  main.querySelectorAll('[data-del]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      if (!confirm('删掉这条动态？')) return;
+      try {
+        await api(`/moments/${b.dataset.del}`, { method: 'DELETE' });
+        toast('删了', 1200);
+        pageMoments();
+      } catch (err) {
+        toast('删除失败：' + err.message, 2400);
+      }
+    }));
 
   // 她也能发 —— 他下次醒来会在房间里看到
   let momImages = [];
@@ -2856,118 +2883,21 @@ async function promptInstall() {
 
   $('#splash').addEventListener('click', enterApp);
   $('#splashMore').addEventListener('click', (e) => { e.stopPropagation(); enterApp(); });
-  $('#fab').addEventListener('click', () => go('chat'));
+  $('#fab').addEventListener('click', () => {
+    // 手势不稳，这颗按钮就是最可靠的入口：点它开/关抽屉
+    if (drawerOpen) closeDrawer();
+    else openDrawer();
+  });
   $('#back').addEventListener('click', () => go('home'));
 
   /*
-   * 抽屉：跟手拖动。
+   * 抽屉只用点的，不做手势。
    *
-   * 第一版是"手指抬起时一次性跳出来"（只在 touchend 判断阈值），
-   * 所以感觉一顿一顿的、不像在自己动。现在改成拖动过程中实时跟手，
-   * 松手再决定是收回还是弹开。
+   * 试过"从左边缘跟手划开"，手机上不跟手，还误触过整页点不动。
+   * 现在入口只有两个：右下角那颗按钮、左上角那颗小圆。
    */
   const mask = $('#drawerMask');
-  const drawerEl = $('#drawer');
   if (mask) mask.addEventListener('click', () => closeDrawer());
-
-  const drawerWidth = () => (drawerEl ? drawerEl.getBoundingClientRect().width || 280 : 280);
-
-  /** 把抽屉挪到 0~1 的进度上（1 = 完全展开） */
-  function setDragProgress(p) {
-    if (!drawerEl) return;
-    const v = Math.max(0, Math.min(1, p));
-    drawerEl.style.transform = `translateX(${(v - 1) * 100}%)`;
-    if (mask) {
-      // 只在真的拉开一点之后才让遮罩出现。
-      // 踩过的坑：透明度 0 也照样能吃掉点击，一旦漏关就整页点不动。
-      if (v > 0.02) {
-        mask.hidden = false;
-        mask.style.opacity = String(v);
-      } else {
-        mask.style.opacity = '';
-        mask.hidden = true;
-      }
-    }
-  }
-
-  /** 放弃这次拖动：把抽屉和遮罩都还原干净 */
-  function abortDrag() {
-    if (drawerEl) {
-      drawerEl.classList.remove('dragging');
-      drawerEl.style.transform = '';
-    }
-    if (mask) {
-      mask.style.opacity = '';
-      if (!drawerOpen) mask.hidden = true;
-    }
-    drag = null;
-  }
-
-  let drag = null; // { startX, startY, mode: 'open' | 'close', moved: boolean }
-
-  document.addEventListener(
-    'touchstart',
-    (e) => {
-      const t = e.touches[0];
-      if (!t) return;
-      // 顶栏里的东西（最主要就是左上角那颗小圆）不参与划动，
-      // 否则轻点头像会被当成"从左边缘起划"，抽屉打不开还挡掉点击。
-      if (e.target instanceof Element && e.target.closest('.apphead')) return;
-
-      if (!drawerOpen && t.clientX <= 28) {
-        drag = { startX: t.clientX, startY: t.clientY, mode: 'open', moved: false };
-        if (drawerEl) drawerEl.classList.add('dragging');
-        setDragProgress(0);
-      } else if (drawerOpen && drawerEl && drawerEl.contains(e.target)) {
-        drag = { startX: t.clientX, startY: t.clientY, mode: 'close', moved: false };
-        drawerEl.classList.add('dragging');
-      }
-    },
-    { passive: true },
-  );
-
-  document.addEventListener(
-    'touchmove',
-    (e) => {
-      if (!drag) return;
-      const t = e.touches[0];
-      if (!t) return;
-      const dx = t.clientX - drag.startX;
-      const dy = t.clientY - drag.startY;
-
-      // 竖向为主就放弃这次拖动（让她正常滚页面）
-      if (!drag.moved) {
-        if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > 8) {
-          abortDrag();
-          return;
-        }
-        if (Math.abs(dx) < 4) return;
-        drag.moved = true;
-      }
-
-      if (drag.mode === 'open') setDragProgress(dx / drawerWidth());
-      else setDragProgress(1 + dx / drawerWidth());
-    },
-    { passive: true },
-  );
-
-  function endDrag() {
-    if (!drag) return;
-    if (drawerEl) {
-      // 松手前先读出当前进度，决定弹开还是收回
-      const m = /translateX\(([-\d.]+)%\)/.exec(drawerEl.style.transform || '');
-      const pct = m ? 1 + Number(m[1]) / 100 : drawerOpen ? 1 : 0;
-      drawerEl.classList.remove('dragging');
-      drawerEl.style.transform = '';
-      if (mask) mask.style.opacity = '';
-      if (pct > 0.35) openDrawer();
-      else closeDrawer();
-    }
-    drag = null;
-  }
-
-  document.addEventListener('touchend', endDrag, { passive: true });
-  document.addEventListener('touchcancel', endDrag, { passive: true });
 
   /*
    * 左上角那颗小圆：点一下开/关抽屉，长按 600ms 在聊天页是拍一拍。

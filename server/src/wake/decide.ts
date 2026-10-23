@@ -363,21 +363,13 @@ export async function decideAndAct(input: {
           const id = await postFromWake({ content: a.content });
           if (id) momentIds.push(id);
           /*
-           * 发过的动态也要成为他的记忆。
-           * 否则聊天里问"你发了什么"，他只能说"我发过一条"却说不出内容。
+           * 不再为"发动态"单独写一条经历记忆。
+           *
+           * 踩过的坑：它会被「他写的日记」当成日记捞出来，
+           * 结果那一栏里一半是"我发了一条动态：…"（她能一眼看出不对）。
+           * 动态本身就在 moments 表里，他要用 get_moments 看得到；
+           * 这次醒来做过什么，也已经有对话流里那条括注了。
            */
-          try {
-            const { saveMemory } = await import('../memory/save.js');
-            await saveMemory({
-              kind: 'experience',
-              content: `我发了一条动态：「${a.content}」`,
-              eventTime: new Date().toISOString().slice(0, 10),
-              importance: 0.5,
-              via: 'wake',
-            });
-          } catch {
-            /* 记忆写失败不影响动态本身 */
-          }
           break;
         }
         case 'comment': {
