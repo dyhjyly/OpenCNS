@@ -1339,6 +1339,19 @@ const MEMORY_FORMAT = {
   importance: '0~1',
 };
 
+/** causal 可能存成纯文本，也可能是四环对象（happened/reaction/act/outcome） */
+function causalText(c) {
+  if (!c) return '';
+  if (typeof c === 'string') return c;
+  if (typeof c === 'object') {
+    const order = ['happened', 'reaction', 'act', 'outcome'];
+    const parts = order.filter((k) => typeof c[k] === 'string' && c[k].trim()).map((k) => `${k}：${c[k]}`);
+    const rest = Object.keys(c).filter((k) => !order.includes(k) && typeof c[k] === 'string');
+    return [...parts, ...rest.map((k) => `${k}：${c[k]}`)].join('　');
+  }
+  return String(c);
+}
+
 async function pageMemoryReview(status = 'pending') {
   const main = $('#main');
   main.innerHTML = '<div class="mrv"><div class="empty">读取中…</div></div>';
@@ -1404,7 +1417,7 @@ async function pageMemoryReview(status = 'pending') {
             <div class="mrv-body">${esc(x.content)}</div>
           `}
 
-          ${x.causal ? `<div class="mrv-meta">因果：${esc(x.causal)}</div>` : ''}
+          ${x.causal ? `<div class="mrv-meta">因果：${esc(causalText(x.causal))}</div>` : ''}
           ${Array.isArray(x.quotes) && x.quotes.length
             ? `<div class="mrv-quote">${x.quotes.map((q) => `「${esc(q.text || '')}」`).join(' ')}</div>` : ''}
 

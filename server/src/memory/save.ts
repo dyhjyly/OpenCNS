@@ -123,12 +123,17 @@ export async function saveMemory(input: SaveMemoryInput): Promise<string> {
 
   try {
     const row = await one<{ id: string }>(
+      /*
+       * causal 是 jsonb，但这里拿到的是纯文本。
+       * 直接塞会报 `invalid input syntax for type json`（episode 永远存不进去）。
+       * 用 to_jsonb($4::text) 存成 JSON 字符串：读出来还是原文。
+       */
       `insert into memory_items (
          kind, origin, subject, content, quotes, causal,
          event_time, event_time_precision, ingested_at,
          privacy, state, importance, decay_score, embedding, provenance
        ) values (
-         $1, 'self', 'shared', $2, $3::jsonb, $4,
+         $1, 'self', 'shared', $2, $3::jsonb, to_jsonb($4::text),
          $5, $6, now(),
          'private', 'active', $7, 1.0, $8::vector, $9::jsonb
        ) returning id`,

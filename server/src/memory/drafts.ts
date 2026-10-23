@@ -132,13 +132,21 @@ export async function approveDraft(
   }
 
   try {
+    /*
+     * 注意：memory_items.causal 是 **jsonb**（存四环对象 happened/reaction/act/outcome），
+     * 而草稿里存的是纯文本。
+     *
+     * 之前直接把 text 塞进 jsonb 列，PostgreSQL 会按 JSON 解析这段中文，
+     * 于是报 `invalid input syntax for type json` —— 审核通过永远 400。
+     * 现在用 to_jsonb($4::text)：存成 JSON 字符串，读出来还是原文。
+     */
     const mem = await one<{ id: string }>(
       `insert into memory_items (
          kind, origin, subject, content, quotes, causal,
          event_time, event_time_precision, ingested_at,
          privacy, state, importance, decay_score, embedding, provenance
        ) values (
-         $1, 'self', 'shared', $2, $3::jsonb, $4,
+         $1, 'self', 'shared', $2, $3::jsonb, to_jsonb($4::text),
          $5, $6, now(),
          'private', 'active', $7, 1.0, $8::vector, $9::jsonb
        ) returning id::text`,
