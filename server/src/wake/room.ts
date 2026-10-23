@@ -105,6 +105,32 @@ export async function buildRoomPack(): Promise<RoomPack> {
   parts.push(...renderNowBlock(clock).slice(1));
   parts.push('');
 
+  /*
+   * 最近的对话 —— 这一块是必须的。
+   *
+   * 林遇实测："插进去的消息他看得到，但他不记得自己做过什么，
+   * 感觉话是他说的，但写下时的感受他不记得，也不记得被唤醒过。"
+   *
+   * 原因就是：唤醒时只看到一个"房间"，没带对话。他当然不知道自己说过什么。
+   * 现在把最近的对白原样给他，带上时间戳。
+   */
+  const dialog = await many<{ role: string; content: string; at: Date | string }>(
+    `select role, content, event_time as at from messages
+      where role in ('user','assistant')
+      order by seq desc limit 24`,
+  ).catch(() => []);
+  if (dialog.length > 0) {
+    parts.push('【你们最近说的话】（按时间，最后一条最近）');
+    for (const m of dialog.reverse()) {
+      const d = new Date(m.at);
+      const stamp = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+      const who = m.role === 'assistant' ? '我' : '她';
+      const text = m.content.replace(/\s+/g, ' ').slice(0, 120);
+      parts.push(`· [${stamp}] ${who}：${text}`);
+    }
+    parts.push('');
+  }
+
   if (materials.lastWake) {
     parts.push('【上次醒来】');
     parts.push(
@@ -119,6 +145,28 @@ export async function buildRoomPack(): Promise<RoomPack> {
     parts.push('【最近你自己做过的事】');
     for (const e of materials.recentExperiences) {
       parts.push(`· [${e.when}] ${e.content}`);
+    }
+    parts.push('');
+  }
+
+  /*
+   * 你自己写下的记忆（感受、想法）。
+   *
+   * 她说："感觉话是他说的，但写下时的感受他不记得。"
+   * 那就把最近写下的原话摆出来 —— 那是他自己的话，不是系统转述。
+   */
+  const myWritings = await many<{ content: string; at: Date | string; via: string }>(
+    `select content, ingested_at as at, provenance->>'via' as via
+       from memory_items
+      where provenance->>'source' = 'self' and state = 'active'
+      order by ingested_at desc limit 4`,
+  ).catch(() => []);
+  if (myWritings.length > 0) {
+    parts.push('【你最近写下的】');
+    for (const w of myWritings) {
+      const d = new Date(w.at);
+      const stamp = `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+      parts.push(`· [${stamp}] ${w.content.replace(/\s+/g, ' ').slice(0, 160)}`);
     }
     parts.push('');
   }

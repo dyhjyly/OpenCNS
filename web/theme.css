@@ -752,6 +752,54 @@ body.memory-mode .main { min-height: 0; overflow: hidden; display: flex; }
 .mom-cmt-row { font-size: var(--fs-small); line-height: 1.6 }
 .mom-cmt-row b { color: var(--accent); font-family: var(--f-title); margin-right: 6px }
 
+/* 记忆审核 */
+.draft-top {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;
+}
+.draft-kind {
+  font-family: var(--f-title); font-weight: 700; font-size: 10.5px;
+  color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  border-radius: 999px; padding: 0 7px;
+}
+.draft-via { font-size: 10.5px; color: var(--muted) }
+.draft-when { font-family: var(--f-body-en); font-size: 10.5px; color: var(--muted) }
+.draft-st {
+  margin-left: auto; font-size: 10px; color: var(--muted);
+  border: 1px solid var(--line); border-radius: 999px; padding: 0 7px;
+}
+.draft-body { font-size: 13.5px; line-height: 1.8; white-space: pre-wrap }
+.draft-meta { margin-top: 8px; font-size: 11.5px; color: var(--muted) }
+.draft-quote {
+  margin-top: 8px; padding: 8px 10px; border-radius: 10px;
+  background: color-mix(in srgb, var(--bg2) 70%, transparent);
+  font-size: 12px; line-height: 1.7;
+}
+.draft-acts { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap }
+.mem-toggle.has-dot {
+  border-color: var(--accent); color: var(--accent);
+}
+
+/* 醒来房间：可展开的模块 */
+.room-sec {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--card);
+  margin-bottom: 12px;
+  overflow: hidden;
+}
+.room-sec > summary {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; padding: 14px 16px; cursor: pointer;
+  list-style: none; user-select: none;
+}
+.room-sec > summary::-webkit-details-marker { display: none }
+.room-sec > summary::after {
+  content: '⌄'; color: var(--muted); font-size: 12px;
+  transition: transform .18s ease;
+}
+.room-sec[open] > summary::after { transform: rotate(180deg) }
+.room-body { padding: 0 16px 14px }
+
 /* ═══════════════ 醒来房间 ═══════════════ */
 .diary-item {
   padding: 12px 0;

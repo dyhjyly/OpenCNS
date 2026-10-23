@@ -329,7 +329,7 @@ function msgTime(at) {
   return `${sameYear ? '' : `${d.getFullYear()}/`}${d.getMonth() + 1}/${d.getDate()} ${hm}`;
 }
 
-function bubbleEl(who, text, at) {
+function bubbleEl(who, text, at, showTime = false) {
   const wrap = document.createElement('div');
   wrap.className = `bwrap ${who === 'me' ? 'mine' : ''}`;
   const b = document.createElement('div');
@@ -339,8 +339,18 @@ function bubbleEl(who, text, at) {
   const time = document.createElement('div');
   time.className = 'mtime';
   time.textContent = at || msgTime();
+  // 她的要求：不是每个气泡都显示时间，只在每轮最后一个下面显示
+  time.hidden = !showTime;
   wrap.appendChild(time);
   return { wrap, bubble: b, time };
+}
+
+/** 一轮里只有最后一个可见气泡显示时间 */
+function showLastTime(bubbles) {
+  const visible = bubbles.filter((x) => !x.bubble.hidden);
+  for (const x of bubbles) x.time.hidden = true;
+  const last = visible[visible.length - 1];
+  if (last) last.time.hidden = false;
 }
 
 /** 把一段回复按换行拆成多个气泡（她要求的"换行分割成小气泡"） */
@@ -357,7 +367,9 @@ function assistantBubbles(container, text, at, store) {
     store.bubbles[i].bubble.textContent = parts[i] ?? '';
     if (parts[i] === undefined) store.bubbles[i].bubble.hidden = true;
     else store.bubbles[i].bubble.hidden = false;
+    store.bubbles[i].time.textContent = at || msgTime();
   }
+  showLastTime(store.bubbles);
   return store.bubbles;
 }
 
@@ -432,7 +444,7 @@ async function pageChat() {
           if (reasoning && store.thinking) log.appendChild(thinkingBlock(reasoning));
           assistantBubbles(log, m.content, msgTime(new Date(m.at)), { bubbles: [] });
         } else {
-          const el = bubbleEl('me', m.content, msgTime(new Date(m.at)));
+          const el = bubbleEl('me', m.content, msgTime(new Date(m.at)), true);
           // 附件回显
           const atts = (m.meta && m.meta.attachments) || [];
           if (atts.length) {
@@ -519,7 +531,7 @@ async function pageChat() {
     $('#chatSend').disabled = true;
 
     // 她的气泡
-    const mine = bubbleEl('me', text || '（发了附件）', hhmm());
+    const mine = bubbleEl('me', text || '（发了附件）', msgTime(), true);
     if (atts.length) {
       const box = document.createElement('div');
       box.className = 'att-row';
@@ -996,6 +1008,14 @@ const ACTION_TEXT = {
   stay_quiet: '什么也没做',
 };
 
+/** 醒来房间的一块：可以展开/收回，跟工具模块一样 */
+function roomSec(title, cap, body, open = true) {
+  return `<details class="room-sec" ${open ? 'open' : ''}>
+    <summary><span class="card-title" style="margin:0">${esc(title)}</span><span class="caps">${esc(String(cap ?? ''))}</span></summary>
+    <div class="room-body">${body}</div>
+  </details>`;
+}
+
 async function pageWake() {
   const main = $('#main');
   main.innerHTML = '<div class="empty">加载中…</div>';
@@ -1014,58 +1034,37 @@ async function pageWake() {
   };
 
   main.innerHTML = `
-    <section class="card ornate">
-      <div class="card-title">醒来过<span class="caps">${r.counts.wakes} 次</span></div>
-      <div class="usage-row">
+    ${roomSec('醒来过', `${r.counts.wakes} 次`, `
+      <div class="usage-row" style="margin-top:0">
         <span>真的醒来 ${r.counts.decided} 次</span>
         <span>零成本跳过 ${r.counts.skipped} 次</span>
-      </div>
-    </section>
+      </div>`, true)}
 
-    ${r.surprises.length ? `
-      <section class="card ornate">
-        <div class="card-title">惊喜<span class="caps">已解开</span></div>
-        ${r.surprises.map((s) => `<div class="moment-note">${esc(s.content)}</div>`).join('')}
-      </section>` : ''}
+    ${r.surprises.length ? roomSec('惊喜', '已解开',
+      r.surprises.map((s) => `<div class="moment-note">${esc(s.content)}</div>`).join(''), true) : ''}
 
-    ${r.lockedSurprises > 0 ? `
-      <section class="card ornate">
-        <div class="card-title">还有惊喜没到时间<span class="caps">${r.lockedSurprises}</span></div>
-        <p style="font-size:var(--fs-small);color:var(--muted);margin:0">他藏起来的，到时间自己会解开。</p>
-      </section>` : ''}
+    ${r.lockedSurprises > 0 ? roomSec('还有惊喜没到时间', `${r.lockedSurprises}`,
+      '<p style="font-size:var(--fs-small);color:var(--muted);margin:0">他藏起来的，到时间自己会解开。</p>', false) : ''}
 
-    ${(r.diaries || []).length ? `
-      <section class="card ornate">
-        <div class="card-title">他写的日记<span class="caps">${r.diaries.length} 篇</span></div>
-        ${r.diaries.map((d) => `
+    ${roomSec('他写的日记', `${(r.diaries || []).length} 篇`,
+      (r.diaries || []).length
+        ? r.diaries.map((d) => `
           <div class="diary-item">
             <div class="diary-when">${fmt(d.at)} · ${esc(KIND_LABEL[d.kind] || d.kind)}</div>
             <div class="diary-body">${esc(d.content)}</div>
-          </div>`).join('')}
-      </section>` : `
-      <section class="card ornate">
-        <div class="card-title">他写的日记</div>
-        <p style="font-size:var(--fs-small);color:var(--muted);margin:0">
-          还没有。凌晨的记忆时间里他写了什么，会出现在这里。
-        </p>
-      </section>`}
+          </div>`).join('')
+        : '<p style="font-size:var(--fs-small);color:var(--muted);margin:0">还没有。凌晨的记忆时间里他写了什么，会出现在这里。</p>',
+      true)}
 
-    ${r.pats && r.pats.length ? `
-      <section class="card ornate">
-        <div class="card-title">他拍了拍你<span class="caps">${r.pats.length} 次</span></div>
-        ${r.pats.map((p) => `<div class="wake-row"><div class="wake-when">${fmt(p.at)}</div>
-          <div class="wake-what">拍了你一下${p.suffix ? '，' + esc(p.suffix) : ''}</div></div>`).join('')}
-      </section>` : ''}
+    ${r.pats && r.pats.length ? roomSec('他拍了拍你', `${r.pats.length} 次`,
+      r.pats.map((p) => `<div class="wake-row"><div class="wake-when">${fmt(p.at)}</div>
+        <div class="wake-what">拍了你一下${p.suffix ? '，' + esc(p.suffix) : ''}</div></div>`).join(''), false) : ''}
 
-    ${r.notes.length ? `
-      <section class="card ornate">
-        <div class="card-title">他的便签<span class="caps">${r.notes.length}</span></div>
-        ${r.notes.map((n) => `<div class="moment-note small">${esc(n.content)}</div>`).join('')}
-      </section>` : ''}
+    ${r.notes.length ? roomSec('他的便签', `${r.notes.length}`,
+      r.notes.map((n) => `<div class="moment-note small">${esc(n.content)}</div>`).join(''), false) : ''}
 
-    <section class="card ornate">
-      <div class="card-title">最近几次醒来</div>
-      ${r.entries.length === 0
+    ${roomSec('最近几次醒来', `${r.entries.length} 条`,
+      r.entries.length === 0
         ? '<div class="empty">还没醒过</div>'
         : r.entries.map((e) => `
           <div class="wake-row">
@@ -1075,13 +1074,13 @@ async function pageWake() {
               e.actions.map((a) => `<span>${esc(ACTION_TEXT[a] || a)}</span>`).join('')
             }</div>` : ''}
             ${e.did ? `<div class="wake-did">${esc(e.did)}</div>` : ''}
-          </div>`).join('')}
-    </section>
+          </div>`).join(''), true)}
 
-    <section class="card ornate">
-      <div class="card-title">手动</div>
-      <div class="row"><span class="k">现在叫醒他一次</span><button class="mini" id="wakeNow">叫醒</button></div>
-    </section>
+    ${roomSec('手动', '叫醒', `
+      <div class="row" style="border:0;padding:0">
+        <span class="k">现在叫醒他一次</span>
+        <button class="mini" id="wakeNow">叫醒</button>
+      </div>`, false)}
   `;
 
   $('#wakeNow').addEventListener('click', async () => {
@@ -1144,12 +1143,105 @@ function layoutStars(points) {
 
 let star = null; // 星图运行态
 
+/* ─────────── 记忆审核 ─────────── */
+/**
+ * 他写下的记忆先落在这里，等她看过才进正式记忆库。
+ * 一眼能回答"他到底存进去了没有"。
+ */
+async function pageMemoryReview(status = 'pending') {
+  const main = $('#main');
+  main.innerHTML = '<div class="empty">读取中…</div>';
+
+  let d;
+  try {
+    d = await api(`/memory/drafts?status=${status}&limit=60`);
+  } catch (err) {
+    main.innerHTML = `<div class="empty">读不到（${esc(err.message)}）</div>`;
+    return;
+  }
+
+  const kindName = { episode: '一段对话', semantic: '一件事', experience: '他的经历', reflection: '他的想法' };
+  const viaName = { save_memory: '对话里记的', nightly: '凌晨写的' };
+
+  main.innerHTML = `
+    <div class="subhead"><button class="mini" id="rvBack">← 记忆库</button><span>记忆审核</span></div>
+
+    <div class="rv-tabs">
+      ${[['pending', `待审 ${d.pending}`], ['approved', '已通过'], ['rejected', '已驳回'], ['all', '全部']]
+        .map(([k, label]) => `<button class="mini ${status === k ? '' : 'ghost'}" data-st="${k}">${label}</button>`)
+        .join('')}
+    </div>
+
+    ${d.drafts.length === 0
+      ? `<div class="empty">${status === 'pending' ? '没有待审的记忆。他存的东西会出现在这里。' : '这里还没有记录。'}</div>`
+      : d.drafts.map((x) => `
+        <section class="card ornate" data-draft="${x.id}">
+          <div class="draft-top">
+            <span class="draft-kind">${esc(kindName[x.kind] || x.kind)}</span>
+            <span class="draft-via">${esc(viaName[x.via] || x.via)}</span>
+            <span class="draft-when">${x.eventTime ? String(x.eventTime).slice(0, 10) : '没有日期'}</span>
+            ${x.status !== 'pending' ? `<span class="draft-st">${x.status === 'approved' ? '已通过' : '已驳回'}</span>` : ''}
+          </div>
+          <div class="draft-body">${esc(x.content)}</div>
+          ${x.causal ? `<div class="draft-meta">因果：${esc(x.causal)}</div>` : ''}
+          ${Array.isArray(x.quotes) && x.quotes.length
+            ? `<div class="draft-quote">${x.quotes.map((q) => `「${esc(q.text || '')}」`).join(' ')}</div>` : ''}
+          ${x.status === 'pending' ? `
+            <div class="draft-acts">
+              <button class="mini" data-ok="${x.id}">收下</button>
+              <button class="mini ghost" data-edit="${x.id}">改一下再收</button>
+              <button class="mini ghost" data-no="${x.id}">不要</button>
+            </div>` : ''}
+        </section>`).join('')}
+  `;
+
+  $('#rvBack').addEventListener('click', () => { go('memory'); });
+  main.querySelectorAll('[data-st]').forEach((b) =>
+    b.addEventListener('click', () => pageMemoryReview(b.dataset.st)));
+
+  main.querySelectorAll('[data-ok]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      try {
+        const r = await api(`/memory/drafts/${b.dataset.ok}/approve`, { method: 'POST', body: '{}' });
+        toast(r.ok ? '收下了，进记忆库了' : `没收下：${r.error}`, 2000);
+        pageMemoryReview(status);
+      } catch (err) { toast('失败：' + err.message, 2400); }
+    }));
+
+  main.querySelectorAll('[data-edit]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      const card = b.closest('[data-draft]');
+      const cur = card.querySelector('.draft-body').textContent;
+      const text = prompt('改成什么样？', cur);
+      if (text === null) return;
+      const day = prompt('日期（YYYY-MM-DD，不改就留空）', '');
+      try {
+        const r = await api(`/memory/drafts/${b.dataset.edit}/approve`, {
+          method: 'POST',
+          body: JSON.stringify({ content: text, eventTime: day && day.trim() ? day.trim() : undefined }),
+        });
+        toast(r.ok ? '改好并收下了' : `没收下：${r.error}`, 2200);
+        pageMemoryReview(status);
+      } catch (err) { toast('失败：' + err.message, 2400); }
+    }));
+
+  main.querySelectorAll('[data-no]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      try {
+        await api(`/memory/drafts/${b.dataset.no}/reject`, { method: 'POST', body: '{}' });
+        toast('驳回了', 1200);
+        pageMemoryReview(status);
+      } catch (err) { toast('失败：' + err.message, 2400); }
+    }));
+}
+
 async function pageMemory() {
   const main = $('#main');
   main.innerHTML = `
     <div class="mem-wrap">
       <div class="mem-tools">
         <input type="search" id="memQ" placeholder="在心河里找一段记忆…" />
+        <button class="mem-toggle" id="memReview">审核</button>
         <button class="mem-toggle" id="memView">列表</button>
       </div>
       <div class="mem-chips" id="memChips"></div>
@@ -1177,6 +1269,19 @@ async function pageMemory() {
   const countEl = $('#memCount');
   const chips = $('#memChips');
   const listEl = $('#memList');
+
+  // 记忆审核入口：他写的东西先在那儿等她过一眼
+  try {
+    const d = await api('/memory/drafts?status=pending&limit=1');
+    const btn = $('#memReview');
+    if (btn) {
+      btn.textContent = d.pending > 0 ? `审核 ${d.pending}` : '审核';
+      if (d.pending > 0) btn.classList.add('has-dot');
+      btn.addEventListener('click', () => pageMemoryReview());
+    }
+  } catch {
+    /* 读不到就算，不影响星图 */
+  }
 
   const pts = layoutStars(map.points);
   const byId = new Map(pts.map((p) => [p.id, p]));

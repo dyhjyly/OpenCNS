@@ -89,6 +89,31 @@ export async function saveMemory(input: SaveMemoryInput): Promise<string> {
   }
   if (!eventTime) eventTime = new Date().toISOString();
 
+  /*
+   * 他自己写的记忆先落进"待审"，等林遇看过才进正式记忆库。
+   *
+   * 她的原话："我不知道他是不是每次记忆都没存进去，我查不到，
+   * 在记忆库模块中另加一个记忆审核，他存的记忆都交给我看一遍，我再存进去。"
+   *
+   * 注意：醒来时自动生成的经历（via='wake'）不进审核 —— 那是流水，不是"他写的"。
+   */
+  const via = input.via ?? 'save_memory';
+  if (via === 'save_memory' || via === 'nightly') {
+    const { createDraft } = await import('./drafts.js');
+    const draftId = await createDraft({
+      kind,
+      content,
+      quotes,
+      causal: causal || null,
+      eventTime,
+      importance: input.importance ?? 0.5,
+      via,
+    });
+    if (!draftId) return '没写成：待审队列插入失败。';
+    log.info('记忆进了待审', { id: draftId.slice(0, 8), via, kind, chars: content.length });
+    return `记下了，放进待审了（编号 ${draftId.slice(0, 8)}）。她看过之后才会正式进记忆库。`;
+  }
+
   let embedding: string | null = null;
   try {
     embedding = vectorLiteral(await embedOne(content.slice(0, 2000)));

@@ -752,6 +752,46 @@ export function startHttpServer(): Server {
     }
   });
 
+  /* ─── 记忆审核（他写的先给她看）─── */
+  app.get('/memory/drafts', requireToken, async (req, res) => {
+    try {
+      const { listDrafts, pendingCount } = await import('../memory/drafts.js');
+      const status = ['pending', 'approved', 'rejected', 'all'].includes(String(req.query.status))
+        ? String(req.query.status)
+        : 'pending';
+      return res.json({
+        ok: true,
+        status,
+        pending: await pendingCount(),
+        drafts: await listDrafts(status, Math.min(100, Number(req.query.limit ?? 50))),
+      });
+    } catch (err) {
+      log.error('读记忆待审失败', errFields(err));
+      return res.status(500).json(errFields(err));
+    }
+  });
+
+  app.post('/memory/drafts/:id/approve', requireToken, async (req, res) => {
+    try {
+      const { approveDraft } = await import('../memory/drafts.js');
+      const b = (req.body ?? {}) as { content?: string; eventTime?: string; kind?: string };
+      const out = await approveDraft(String(req.params.id), b);
+      return res.status(out.ok ? 200 : 400).json(out);
+    } catch (err) {
+      return res.status(500).json(errFields(err));
+    }
+  });
+
+  app.post('/memory/drafts/:id/reject', requireToken, async (req, res) => {
+    try {
+      const { rejectDraft } = await import('../memory/drafts.js');
+      const note = (req.body as { note?: string })?.note;
+      return res.json({ ok: await rejectDraft(String(req.params.id), note) });
+    } catch (err) {
+      return res.status(500).json(errFields(err));
+    }
+  });
+
   app.get('/memory/starmap', requireToken, async (_req, res) => {
     try {
       const { getStarMap } = await import('../memory/starmap.js');
