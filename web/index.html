@@ -19,7 +19,7 @@
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/cormorant-garamond@5.0.13/600-italic.css" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/cormorant-garamond@5.0.13/400-italic.css" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource-variable/bitter@5/index.css" />
-<link rel="stylesheet" href="./theme.css?v=202610232116" />
+<link rel="stylesheet" href="./theme.css?v=202610232218" />
 </head>
 <body data-theme="warm">
   <div id="splash" class="splash">
@@ -57,13 +57,24 @@
 
     <main id="main" class="main"></main>
 
-    <nav class="tabbar" id="tabbar" aria-label="主导航"></nav>
+    <!-- 左侧抽屉导航：点左上角那颗小圆或从左边缘划开 -->
+    <div class="drawer-mask" id="drawerMask" hidden></div>
+    <aside class="drawer" id="drawer" aria-label="主导航" aria-hidden="true">
+      <div class="drawer-head">
+        <div class="drawer-title">Jy &amp; Ly</div>
+        <div class="drawer-sub" id="drawerSub">咱们的家</div>
+      </div>
+      <nav class="drawer-nav" id="drawerNav"></nav>
+      <div class="drawer-foot" id="drawerFoot"></div>
+    </aside>
+
+    <nav class="tabbar" id="tabbar" aria-label="主导航" hidden></nav>
     <button class="fab" id="fab" aria-label="聊天">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5a8.5 8.5 0 1 1-3.4-6.8"/><path d="M21 4.5v3.6h-3.6"/><path d="M8 11h8M8 14.5h5"/></svg>
     </button>
   </div>
 
   <div id="toast" class="toast" hidden></div>
-  <script type="module" src="./app.js?v=202610232116"></script>
+  <script type="module" src="./app.js?v=202610232218"></script>
 </body>
 </html>

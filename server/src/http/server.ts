@@ -752,6 +752,75 @@ export function startHttpServer(): Server {
     }
   });
 
+  /* ─── MCP：她手动连，他才有工具 ─── */
+  app.get('/mcp', requireToken, async (_req, res) => {
+    try {
+      const { listServers } = await import('../mcp/index.js');
+      return res.json({ ok: true, servers: await listServers() });
+    } catch (err) {
+      return res.status(500).json(errFields(err));
+    }
+  });
+
+  app.post('/mcp', requireToken, async (req, res) => {
+    try {
+      const { addServer } = await import('../mcp/index.js');
+      const b = (req.body ?? {}) as { name?: string; url?: string; token?: string; headers?: Record<string, string> };
+      const name = String(b.name ?? '').trim();
+      const url = String(b.url ?? '').trim();
+      if (!name || !url) return res.status(400).json({ error: 'name_and_url_required' });
+      const headers: Record<string, string> = { ...(b.headers ?? {}) };
+      if (b.token && b.token.trim()) headers.authorization = `Bearer ${b.token.trim()}`;
+      const s = await addServer({ name, url, headers });
+      return res.json({ ok: true, server: s });
+    } catch (err) {
+      return res.status(500).json(errFields(err));
+    }
+  });
+
+  app.delete('/mcp/:id', requireToken, async (req, res) => {
+    try {
+      const { removeServer } = await import('../mcp/index.js');
+      await removeServer(String(req.params.id));
+      return res.json({ ok: true });
+    } catch (err) {
+      return res.status(500).json(errFields(err));
+    }
+  });
+
+  app.post('/mcp/:id/connect', requireToken, async (req, res) => {
+    try {
+      const { connect } = await import('../mcp/index.js');
+      const out = await connect(String(req.params.id));
+      return res.status(out.ok ? 200 : 400).json(out);
+    } catch (err) {
+      log.error('MCP 连接异常', errFields(err));
+      return res.status(500).json(errFields(err));
+    }
+  });
+
+  app.post('/mcp/:id/disconnect', requireToken, async (req, res) => {
+    try {
+      const { disconnect } = await import('../mcp/index.js');
+      await disconnect(String(req.params.id));
+      return res.json({ ok: true });
+    } catch (err) {
+      return res.status(500).json(errFields(err));
+    }
+  });
+
+  app.post('/mcp/:id/call', requireToken, async (req, res) => {
+    try {
+      const { callTool } = await import('../mcp/index.js');
+      const b = (req.body ?? {}) as { tool?: string; args?: Record<string, unknown> };
+      if (!b.tool) return res.status(400).json({ error: 'tool_required' });
+      const text = await callTool(String(req.params.id), b.tool, b.args ?? {});
+      return res.json({ ok: true, text });
+    } catch (err) {
+      return res.status(500).json(errFields(err));
+    }
+  });
+
   /* ─── 记忆审核（他写的先给她看）─── */
   app.get('/memory/drafts', requireToken, async (req, res) => {
     try {

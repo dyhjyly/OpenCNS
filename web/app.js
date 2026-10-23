@@ -109,34 +109,70 @@ const TABS = [
   { id: 'settings', label: '设置', icon: 'settings' },
 ];
 
-/* ─────────── 底栏（只在主页显示）─────────── */
+/* ─────────── 左侧抽屉导航 ─────────── */
+/**
+ * 原来是最底下一排标签，手机上一个屏幕放七个太挤。
+ * 现在改成左侧抽屉：点左上角那颗小圆打开，或者从左边缘往右划。
+ */
 function renderTabbar(active) {
+  // 底栏彻底不用了
   const bar = $('#tabbar');
-  if (active !== 'home') {
-    bar.hidden = true;
-    return;
-  }
-  bar.hidden = false;
-  bar.innerHTML = TABS.map(
-    (t) => `<button class="tab" data-page="${t.id}" ${t.id === active ? 'aria-current="page"' : ''}>
-      <svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[t.icon]}</svg>${t.label}
+  if (bar) bar.hidden = true;
+
+  const nav = $('#drawerNav');
+  if (!nav) return;
+  nav.innerHTML = TABS.map(
+    (t) => `<button class="drawer-item" data-page="${t.id}" ${t.id === active ? 'aria-current="page"' : ''}>
+      <svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[t.icon]}</svg><span>${t.label}</span>
     </button>`,
   ).join('');
-  bar.querySelectorAll('.tab').forEach((b) => b.addEventListener('click', () => go(b.dataset.page)));
-  const cur = bar.querySelector('[aria-current="page"]');
-  if (cur) cur.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
+  nav.querySelectorAll('.drawer-item').forEach((b) =>
+    b.addEventListener('click', () => {
+      closeDrawer();
+      go(b.dataset.page);
+    }));
+}
+
+let drawerOpen = false;
+
+function openDrawer() {
+  const d = $('#drawer');
+  const m = $('#drawerMask');
+  if (!d || !m) return;
+  drawerOpen = true;
+  d.classList.add('open');
+  d.setAttribute('aria-hidden', 'false');
+  m.hidden = false;
+  requestAnimationFrame(() => m.classList.add('show'));
+}
+
+function closeDrawer() {
+  const d = $('#drawer');
+  const m = $('#drawerMask');
+  if (!d || !m) return;
+  drawerOpen = false;
+  d.classList.remove('open');
+  d.setAttribute('aria-hidden', 'true');
+  m.classList.remove('show');
+  setTimeout(() => { if (!drawerOpen) m.hidden = true; }, 220);
 }
 
 /* ─────────── 头部 ─────────── */
 function setHeader(page) {
   const isHome = page === 'home';
   $('#back').hidden = isHome;
-  // 聊天页把那颗小圆当头像用（双击 = 拍一拍），其它非主页就藏起来
-  $('#headSlot').hidden = !(isHome || page === 'chat');
+  // 那颗小圆现在到处都在：点它开抽屉（在聊天页长按它是拍一拍）
+  $('#headSlot').hidden = false;
+  $('#headSlot').classList.toggle('as-menu', true);
   if (!isHome) {
     const t = TABS.find((x) => x.id === page);
     $('#greet').textContent = page === 'chat' ? '聊天' : t ? t.label : '';
-    $('#stamp').textContent = page === 'chat' ? '双击头像拍拍他' : '';
+    $('#stamp').textContent = page === 'chat' ? '长按头像是拍一拍' : '';
+  }
+  const sub = $('#drawerSub');
+  if (sub) {
+    const t = TABS.find((x) => x.id === page);
+    sub.textContent = t ? t.label : '咱们的家';
   }
 }
 
@@ -392,6 +428,7 @@ async function pageChat() {
 
   main.innerHTML = `
     <div class="chat-wrap">
+      <div class="chat-aura" aria-hidden="true"><i class="a1"></i><i class="a2"></i><i class="a3"></i></div>
       <div class="chat-log" id="chatLog"></div>
       <div class="attach-strip" id="attachStrip" hidden></div>
       <form class="chat-form" id="chatForm">
@@ -649,15 +686,35 @@ async function pageChat() {
   if (avatar) {
     avatar.style.cursor = 'pointer';
     let lastTapAt = 0;
+    let holdTimer = 0;
+    let held = false;
+
+    // 单击开抽屉；长按（600ms）在聊天页是拍一拍
+    avatar.addEventListener('pointerdown', () => {
+      held = false;
+      holdTimer = window.setTimeout(() => {
+        held = true;
+        if (currentPage === 'chat') {
+          doPat();
+          if (navigator.vibrate) navigator.vibrate(16);
+        }
+      }, 600);
+    });
+    avatar.addEventListener('pointerup', () => {
+      window.clearTimeout(holdTimer);
+    });
+    avatar.addEventListener('pointercancel', () => {
+      window.clearTimeout(holdTimer);
+    });
     avatar.addEventListener('click', () => {
-      if (currentPage !== 'chat') return;
-      const now = Date.now();
-      if (now - lastTapAt < 330) {
-        lastTapAt = 0;
-        doPat();
-      } else {
-        lastTapAt = now;
+      if (held) {
+        held = false;
+        return; // 长按已经处理过，不再开抽屉
       }
+      const now = Date.now();
+      lastTapAt = now;
+      if (drawerOpen) closeDrawer();
+      else openDrawer();
     });
   }
 
@@ -695,6 +752,25 @@ async function pageSettings() {
             <i style="background:${t.dot}"></i>${t.label}
           </button>`).join('')}
       </div>
+    </section>
+
+    <section class="card ornate">
+      <div class="card-title">外部工具（MCP）<span class="caps">你连了他才能用</span></div>
+      <div id="mcpList" class="mcp-list"><div class="empty">读取中…</div></div>
+
+      <details class="mcp-add">
+        <summary>+ 添加一个 MCP 服务器</summary>
+        <div class="mcp-form">
+          <label>名字<input type="text" id="mcpName" placeholder="比如 时间工具" /></label>
+          <label>地址<input type="url" id="mcpUrl" placeholder="https://example.com/mcp" /></label>
+          <label>Token（可选）<input type="text" id="mcpToken" placeholder="会放进 Authorization: Bearer" /></label>
+          <button class="mini" id="mcpAdd">添加</button>
+        </div>
+        <p class="mind-note" style="margin:8px 0 0">
+          默认走 Streamable HTTP（POST JSON-RPC）。添加后点「连接」，他会先取工具清单，
+          然后把它们变成自己可以调用的工具。
+        </p>
+      </details>
     </section>
 
     <section class="card ornate">
@@ -815,6 +891,89 @@ async function pageSettings() {
     toast('清缓存中…', 1400);
     await forceUpdate();
   });
+
+  /* ── MCP ── */
+  const renderMcp = async () => {
+    const box = $('#mcpList');
+    if (!box) return;
+    let list;
+    try {
+      const r = await api('/mcp');
+      list = r.servers || [];
+    } catch (err) {
+      box.innerHTML = `<div class="empty">读不到（${esc(err.message)}）</div>`;
+      return;
+    }
+    if (list.length === 0) {
+      box.innerHTML = '<div class="empty">还没连任何 MCP 服务器。</div>';
+      return;
+    }
+    box.innerHTML = list.map((s) => `
+      <div class="mcp-row" data-id="${s.id}">
+        <div class="mcp-top">
+          <span class="mcp-dot ${s.status === 'connected' ? 'on' : s.status === 'error' ? 'err' : ''}"></span>
+          <b>${esc(s.name)}</b>
+          <span class="mcp-tools">${s.tools.length} 个工具</span>
+          <span class="mcp-st">${s.status === 'connected' ? '已连接' : s.status === 'error' ? '出错' : '未连接'}</span>
+        </div>
+        <div class="mcp-url">${esc(s.url)}</div>
+        ${s.error ? `<div class="mcp-err">${esc(s.error)}</div>` : ''}
+        ${s.tools.length ? `<div class="mcp-toolnames">${s.tools.map((t) => esc(t.name)).join(' · ')}</div>` : ''}
+        <div class="mcp-acts">
+          ${s.status === 'connected'
+            ? '<button class="mini ghost" data-disconnect="' + s.id + '">断开</button>'
+            : '<button class="mini" data-connect="' + s.id + '">连接</button>'}
+          <button class="mini ghost" data-del="' + s.id + '">删除</button>
+        </div>
+      </div>`).join('');
+
+    box.querySelectorAll('[data-connect]').forEach((b) =>
+      b.addEventListener('click', async () => {
+        b.disabled = true;
+        b.textContent = '连接中…';
+        try {
+          const r = await api(`/mcp/${b.dataset.connect}/connect`, { method: 'POST', body: '{}' });
+          toast(r.ok ? `连上了，${r.tools.length} 个工具` : `没连上：${r.error}`, 2600);
+        } catch (err) {
+          toast('没连上：' + err.message, 2600);
+        }
+        renderMcp();
+      }));
+
+    box.querySelectorAll('[data-disconnect]').forEach((b) =>
+      b.addEventListener('click', async () => {
+        await api(`/mcp/${b.dataset.disconnect}/disconnect`, { method: 'POST', body: '{}' }).catch(() => {});
+        renderMcp();
+      }));
+
+    box.querySelectorAll('[data-del]').forEach((b) =>
+      b.addEventListener('click', async () => {
+        if (!confirm('删掉这个 MCP 服务器？')) return;
+        await api(`/mcp/${b.dataset.del}`, { method: 'DELETE' }).catch(() => {});
+        renderMcp();
+      }));
+  };
+
+  const addMcp = $('#mcpAdd');
+  if (addMcp) {
+    addMcp.addEventListener('click', async () => {
+      const name = $('#mcpName').value.trim();
+      const url = $('#mcpUrl').value.trim();
+      const token = $('#mcpToken').value.trim();
+      if (!name || !url) return toast('名字和地址都要填');
+      try {
+        await api('/mcp', { method: 'POST', body: JSON.stringify({ name, url, token }) });
+        $('#mcpName').value = '';
+        $('#mcpUrl').value = '';
+        $('#mcpToken').value = '';
+        toast('加好了，点「连接」试试', 1800);
+        renderMcp();
+      } catch (err) {
+        toast('添加失败：' + err.message, 2400);
+      }
+    });
+  }
+  void renderMcp();
   $('#mChat').addEventListener('change', (e) => save({ 'llm.chat_model': e.target.value }));
   $('#eChat').addEventListener('change', (e) => save({ 'llm.chat_effort': e.target.value }));
   $('#city').addEventListener('change', (e) => {
@@ -2731,6 +2890,42 @@ async function promptInstall() {
   $('#splashMore').addEventListener('click', (e) => { e.stopPropagation(); enterApp(); });
   $('#fab').addEventListener('click', () => go('chat'));
   $('#back').addEventListener('click', () => go('home'));
+
+  /* 抽屉：点遮罩关掉；从左边缘往右划打开；在抽屉上往左划关掉 */
+  const mask = $('#drawerMask');
+  if (mask) mask.addEventListener('click', () => closeDrawer());
+
+  let edgeX = null;
+  let edgeY = null;
+  document.addEventListener(
+    'touchstart',
+    (e) => {
+      const t = e.touches[0];
+      if (!t) return;
+      edgeX = t.clientX;
+      edgeY = t.clientY;
+    },
+    { passive: true },
+  );
+  document.addEventListener(
+    'touchend',
+    (e) => {
+      const t = e.changedTouches[0];
+      if (!t || edgeX === null) return;
+      const dx = t.clientX - edgeX;
+      const dy = Math.abs(t.clientY - (edgeY ?? t.clientY));
+      edgeX = null;
+      edgeY = null;
+      if (dy > Math.abs(dx) || Math.abs(dx) < 60) return; // 以横划为主
+      if (!drawerOpen && dx > 0) {
+        const fromEdge = t.clientX - dx < 40; // 起点贴着左边缘
+        if (fromEdge) openDrawer();
+      } else if (drawerOpen && dx < -60) {
+        closeDrawer();
+      }
+    },
+    { passive: true },
+  );
 
   window.addEventListener('hashchange', () => {
     const page = location.hash.replace('#', '') || 'home';

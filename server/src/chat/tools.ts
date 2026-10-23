@@ -221,6 +221,17 @@ async function execTool(call: ToolCall): Promise<string> {
   const args = parseArgs(call.arguments);
   const days = Number(args.days ?? 7);
 
+  // MCP 工具：名字里带着服务器前缀，转发过去
+  if (call.name.startsWith('mcp__')) {
+    const { parseMcpToolName, findServerByPrefix, callTool } = await import('../mcp/index.js');
+    const parsed = parseMcpToolName(call.name);
+    if (!parsed) return '（工具名看不懂）';
+    const server = await findServerByPrefix(parsed.serverId8);
+    if (!server) return '（这个 MCP 服务器已经被删掉了）';
+    if (server.status !== 'connected') return `（${server.name} 现在没连上，让她在设置里重新连接）`;
+    return callTool(server.id, parsed.tool, args);
+  }
+
   switch (call.name) {
     case 'recall_memory': {
       const ids = Array.isArray(args.ids) ? (args.ids as unknown[]).map(String) : [];
@@ -338,6 +349,34 @@ async function execTool(call: ToolCall): Promise<string> {
   }
 }
 
+/**
+ * 组装这一轮可用的工具：内置的 + 她手动连上的 MCP 服务器提供的。
+ * MCP 工具名统一成 mcp__<server8>__<tool>，回调时再解析回去。
+ */
+async function buildToolList(): Promise<ToolDef[]> {
+  const out: ToolDef[] = [...TOOLS];
+  try {
+    const { listServers, mcpToolName } = await import('../mcp/index.js');
+    const servers = await listServers();
+    for (const s of servers) {
+      if (!s.enabled || s.status !== 'connected') continue;
+      for (const t of s.tools.slice(0, 12)) {
+        out.push({
+          type: 'function',
+          function: {
+            name: mcpToolName(s.id, t.name),
+            description: `［MCP · ${s.name}］${String(t.description ?? t.name).slice(0, 300)}`,
+            parameters: (t.inputSchema as object) ?? { type: 'object', properties: {} },
+          },
+        });
+      }
+    }
+  } catch (err) {
+    log.warn('加载 MCP 工具失败', errFields(err));
+  }
+  return out;
+}
+
 export interface ToolPassResult {
   block: string;
   used: string[];
@@ -359,7 +398,7 @@ export async function runToolPass(
 
   let calls: ToolCall[] = [];
   try {
-    const out = await chatWithTools(messages, TOOLS, {
+    const out = await chatWithTools(messages, await buildToolList(), {
       endpoint: 'cognitive',
       temperature: 0,
       maxTokens: 400,
@@ -393,6 +432,7 @@ export async function runToolPass(
 }
 
 function labelOf(name: string): string {
+  if (name.startsWith('mcp__')) return '外部工具的结果';
   switch (name) {
     case 'recall_memory': return '你翻出来的原文';
     case 'read_persona': return '你自己写下的设定';
