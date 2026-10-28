@@ -255,7 +255,14 @@ async function runEveningReview(today: string): Promise<void> {
       { role: 'user', content: parts.join('\n\n') },
     ],
     REVIEW_TOOLS,
-    { endpoint: 'cognitive', temperature: 0.3, maxTokens: 800, label: 'nightly-review' },
+    {
+      // 走对话端点：认知端点是思考模式，会把预算烧在推理上，
+      // 结果 content 空、tool_calls 也空（实测就是这个）。
+      endpoint: 'chat',
+      temperature: 0.4,
+      maxTokens: 1500,
+      label: 'nightly-review',
+    },
   );
 
   if (out.toolCalls.length === 0) {
