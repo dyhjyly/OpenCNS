@@ -236,7 +236,7 @@ async function runEveningReview(today: string): Promise<void> {
         { role: 'system', content: REVIEW_SYSTEM },
         { role: 'user', content: parts.join('\n\n') },
       ],
-      { endpoint: 'chat', temperature: 0.4, maxTokens: 800, label: 'nightly-review' },
+      { endpoint: 'chat', temperature: 0.4, maxTokens: 4000, label: 'nightly-review' },
     );
   } catch (err) {
     /*
