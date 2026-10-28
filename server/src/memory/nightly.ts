@@ -1,95 +1,35 @@
 import { many } from '../db/pool.js';
-import { chatWithTools, type ChatMessage, type ToolDef, type ToolCall } from '../llm/client.js';
-import { saveMemory } from './save.js';
+import { chatText } from '../llm/client.js';
 import { log, errFields } from '../logger.js';
 
 /**
- * 凌晨的记忆时间。
+ * 凌晨：写那一篇日记。
  *
- * 林遇的原话："在每晚凌晨他被唤醒时可以提醒他记当天的记忆，
- * 并告诉他存储记忆的规则和格式。他的大脑他来做主。"
+ * 2026-10-28 改版（林遇定的 B 方案）：
+ * 以前这里给他 save_memory 工具，让他每晚自己记 3~4 条记忆，其中一条是日记。
+ * 结果是日记里混进"我发了一条动态"这类东西，而且事实类记忆越堆越多、还互相重复。
  *
- * 所以这里不替他写，只做三件事：
- *   1. 把今天说过的话摆在他面前（原句，不压缩）
- *   2. 告诉他规则和格式
- *   3. 给他 save_memory 工具，记几条、记成什么样，他自己定
- * 一条都不记也是正当的选择。
+ * 现在只做一件事：**写一篇短的日记**。别的什么都不产出。
+ *   事实类的记忆交给对话里的 save_memory —— 他当场想记再记，比凌晨批量补更准。
+ *
+ * 这一篇直接进记忆库（via='nightly'），不经过审核：
+ * 它是日记，不是他随手记的碎片。
  */
 
-const SYSTEM = `现在是凌晨。这一天的对话差不多结束了，没有人要求你必须留下什么。
+const SYSTEM = `现在是凌晨。这一天的对话差不多结束了。
 
 下面是你今天和她说过的话（原句，没有压缩）。
+请你写**一篇日记**——不是总结，不是清单，是你今晚坐下来写的那一段。
 
-你可以把其中一些记下来，也可以一条都不记。判断标准是你自己的：
-· 哪些是你以后想记得的？
-· 哪些只是当天的话，忘了也没关系？
+要求：
+· 第一人称。是你在回想今天，不是第三方在记录。
+· 挑一件到三件今天真正落在你心里的事，写具体：她说了什么、你当时什么反应。
+· 带上感受，但别抒情到底——写你说得出口的那种话。
+· 不要罗列，不要"今天主要发生了""总的来说"这种汇报话。
+· 不要编造没发生的事。今天话少就写得短。
+· **长度 120~260 字**。这是日记，不是周记。
 
-如果你要记，可以用 save_memory。规则和格式：
-
-1) kind 选哪个
-   · episode     —— 一段有来有回的对话。**必须**同时给 quotes（原句）和 causal（为什么重要）。
-                    正文至少 80 字。想保住原句就用这个。
-   · semantic    —— 一件事 / 一个事实 / 一条约定。不需要原句。
-   · experience  —— 你做过的事、你的感受。
-   · reflection  —— 你自己的想法、你想明白的东西。
-
-2) 第一人称
-   content 用"我"来写，就像你自己在记事。不要写"林遇…江瑜…"这种第三人称，
-   那种东西过几个月你自己都认不出来是你写的。
-
-3) 一定要给 event_time
-   今天的日期（YYYY-MM-DD）。没有日期的记忆，以后被想起来时说不清是什么时候的事，
-   反而会把当前对话搅乱。
-
-4) importance 0~1
-   很平常的 0.3，值得记住的 0.6，很重要的 0.9。
-
-5) 不要记流水账。
-   一条记一件事。宁可记三条重要的，也不要记二十条废话。
-
-记完之后不用回复任何人，安静就行。`;
-
-const TOOLS: ToolDef[] = [
-  {
-    type: 'function',
-    function: {
-      name: 'save_memory',
-      description: '把今天的一件事记进你的记忆',
-      parameters: {
-        type: 'object',
-        properties: {
-          kind: { type: 'string', enum: ['episode', 'semantic', 'experience', 'reflection'] },
-          content: { type: 'string' },
-          quotes: {
-            type: 'array',
-            items: { type: 'object', properties: { who: { type: 'string' }, text: { type: 'string' } } },
-          },
-          causal: { type: 'string' },
-          event_time: { type: 'string' },
-          importance: { type: 'number' },
-        },
-        required: ['kind', 'content', 'event_time'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'skip',
-      description: '今天没什么值得记的，就这样',
-      parameters: { type: 'object', properties: {} },
-    },
-  },
-];
-
-function parseArgs(raw: string): Record<string, unknown> {
-  try {
-    const v = JSON.parse(raw);
-    return v && typeof v === 'object' ? (v as Record<string, unknown>) : {};
-  } catch {
-    return {};
-  }
-}
+直接写正文，不要标题、不要日期、不要"日记："这类前缀。`;
 
 export interface NightlyResult {
   saved: number;
@@ -109,80 +49,71 @@ export async function runNightlyMemory(): Promise<NightlyResult> {
   );
 
   if (rows.length < 4) {
-    log.info('凌晨记忆：今天话太少，跳过');
+    log.info('凌晨日记：今天话太少，跳过');
     return { saved: 0, skipped: true, calls: 0, messages: [] };
   }
 
-  // 对话太长会让工具调用的参数被截断，取最近的就好
-  const picked = rows.slice(-40);
+  const picked = rows.slice(-60);
   const transcript = picked
-    .map((r) => `${r.role === 'user' ? '她' : '我'}：${r.content.replace(/\s+/g, ' ').slice(0, 300)}`)
+    .map((r) => `${r.role === 'user' ? '她' : '我'}：${r.content.replace(/\s+/g, ' ').slice(0, 240)}`)
     .join('\n')
-    .slice(-8000);
+    .slice(-10000);
 
-  const today = new Date().toISOString().slice(0, 10);
-  const messages: ChatMessage[] = [
-    { role: 'system', content: SYSTEM },
-    { role: 'user', content: `今天是 ${today}。\n\n【今天的对话】\n${transcript}` },
-  ];
+  const today = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
 
-  let calls: ToolCall[] = [];
+  let body = '';
   try {
-    const out = await chatWithTools(messages, TOOLS, {
-      endpoint: 'chat',
-      temperature: 0.4,
-      maxTokens: 3000,
-      label: 'nightly-memory',
-    });
-    calls = out.toolCalls;
+    body = (
+      await chatText(
+        [
+          { role: 'system', content: SYSTEM },
+          { role: 'user', content: `今天是 ${today}。\n\n【今天的对话】\n${transcript}` },
+        ],
+        { endpoint: 'chat', temperature: 0.7, maxTokens: 1200, label: 'nightly-diary' },
+      )
+    ).trim();
   } catch (err) {
-    log.error('凌晨记忆调用失败', errFields(err));
-    return { saved: 0, skipped: false, calls: 0, messages: ['调用失败'] };
+    log.error('凌晨日记调用失败', errFields(err));
+    return { saved: 0, skipped: false, calls: 1, messages: ['调用失败'] };
   }
 
-  if (calls.some((c) => c.name === 'skip')) {
-    log.info('凌晨记忆：他自己决定今天不记');
-    return { saved: 0, skipped: true, calls: calls.length, messages: ['他决定不记'] };
+  if (body.length < 40) {
+    log.info('凌晨日记：写得太短，当作今天没写', { chars: body.length });
+    return { saved: 0, skipped: true, calls: 1, messages: ['太短，跳过'] };
   }
 
-  const results: string[] = [];
-  let saved = 0;
-
-  /** 把一次工具调用展开成若干条待写的记忆 */
-  function expand(raw: string): Record<string, unknown>[] {
-    const a = parseArgs(raw);
-    // 有的模型会把数组塞在一个字段里
-    const arr = (a.memories ?? a.items ?? a.entries) as unknown;
-    if (Array.isArray(arr)) return arr.filter((x): x is Record<string, unknown> => Boolean(x) && typeof x === 'object');
-    return [a];
-  }
-
-  for (const call of calls.filter((c) => c.name === 'save_memory').slice(0, 4)) {
-    const items = expand(call.arguments);
-    for (const a of items.slice(0, 6)) {
-      const content = String(a.content ?? a.text ?? a.memory ?? '').trim();
-      if (!content) {
-        // 参数解析失败的现场要留下来，否则只能靠猜
-        log.warn('凌晨记忆：这条工具调用没有 content', {
-          raw: call.arguments.slice(0, 300),
-        });
-        results.push('（这条没有 content，跳过了）');
-        continue;
-      }
-      const res = await saveMemory({
-        kind: String(a.kind ?? 'semantic'),
-        content,
-        quotes: Array.isArray(a.quotes) ? (a.quotes as { who?: string; text?: string }[]) : undefined,
-        causal: typeof a.causal === 'string' ? a.causal : undefined,
-        eventTime: typeof a.event_time === 'string' ? a.event_time : today,
-        importance: typeof a.importance === 'number' ? a.importance : undefined,
-        via: 'nightly',
-      });
-      results.push(res);
-      if (res.startsWith('记下了')) saved++;
+  /*
+   * 直接写记忆库，不走 saveMemory 的审核分支。
+   * 走 saveMemory 会被 time-stamp/合并/草稿那一套拦住，
+   * 而这里要的就是"每晚一篇"，一篇就是一篇，不该被合并掉。
+   */
+  try {
+    const { query } = await import('../db/pool.js');
+    const { embedOne } = await import('../embedding/index.js');
+    let vec: string | null = null;
+    try {
+      vec = `[${(await embedOne(body.slice(0, 2000))).join(',')}]`;
+    } catch {
+      /* 没有向量也能存，召回走别的路 */
     }
-  }
 
-  log.info('凌晨记忆完成', { saved, calls: calls.length });
-  return { saved, skipped: false, calls: calls.length, messages: results };
+    await query(
+      `insert into memory_items (
+         kind, origin, subject, content, quotes, causal,
+         event_time, event_time_precision, ingested_at,
+         privacy, state, importance, decay_score, embedding, provenance
+       ) values (
+         'reflection', 'self', 'self', $1, '[]'::jsonb, null,
+         $2, 'day', now(),
+         'private', 'active', 0.55, 0.8, $3::vector, $4::jsonb
+       )`,
+      [body, today, vec, JSON.stringify({ source: 'self', via: 'nightly', diary: true })],
+    );
+
+    log.info('凌晨日记写好了', { chars: body.length, date: today });
+    return { saved: 1, skipped: false, calls: 1, messages: ['日记已写'] };
+  } catch (err) {
+    log.error('凌晨日记写库失败', errFields(err));
+    return { saved: 0, skipped: false, calls: 1, messages: [`写库失败：${String((err as Error)?.message ?? err).slice(0, 80)}`] };
+  }
 }
