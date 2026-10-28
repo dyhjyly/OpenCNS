@@ -220,19 +220,36 @@ async function runEveningReview(today: string): Promise<void> {
      * 这种情况按"最要紧的一条"处理，总比整晚白跑好。
      */
     const raw = String((err as Error)?.message ?? '');
-    const ids = [...raw.matchAll(/\b([0-9a-f]{8})\b/g)].map((m) => m[1]!);
+    const ids = [...raw.matchAll(/\b([0-9a-f]{8})\b/g)].map((m) => m[1]!.toLowerCase());
+    // 白名单在下面统一校验，这里先把认出来的都带上
     if (ids.length > 0) {
-      log.info('凌晨复盘：没给 JSON，从回答里认出了编号', { id: ids[0] });
-      parsed = { important: ids.slice(0, 1) };
+      log.info('凌晨复盘：没给 JSON，从回答里认出了编号', { ids: ids.slice(0, 3) });
+      parsed = { important: ids };
     } else {
       log.warn('凌晨复盘解析失败', errFields(err));
       return;
     }
   }
 
-  const important = (parsed.important ?? []).filter((x) => typeof x === 'string').slice(0, 4);
-  const resolved = (parsed.resolved ?? []).filter((x) => typeof x === 'string').slice(0, 4);
-  const witness = (parsed.witness ?? []).filter((x) => typeof x === 'string').slice(0, 3);
+  /*
+   * 白名单：只认我摆给它的那些编号。
+   *
+   * 踩过的坑：它写散文时会**编一个不存在的编号**（实测给了 f5b115c8，
+   * 库里根本没有这条），于是 update 影响 0 行，日志却说"标了 1 条"。
+   * 所以解析出来的编号必须先在候选里查到，否则丢掉。
+   */
+  const allowedIds = new Set([...fresh, ...stale].map((r) => r.id.slice(0, 8)));
+  const allowedInsights = new Set(pending.map((r) => r.id.slice(0, 8)));
+
+  const pickValid = (list: unknown, allow: Set<string>, max: number): string[] =>
+    (Array.isArray(list) ? list : [])
+      .map((x) => (typeof x === 'string' ? x.trim().slice(0, 8).toLowerCase() : ''))
+      .filter((x) => x.length === 8 && allow.has(x))
+      .slice(0, max);
+
+  const important = pickValid(parsed.important, allowedIds, 4);
+  const resolved = pickValid(parsed.resolved, allowedIds, 4);
+  const witness = pickValid(parsed.witness, allowedInsights, 3);
   const insight = typeof parsed.insight === 'string' ? parsed.insight.trim() : '';
 
   if (important.length + resolved.length + witness.length === 0 && !insight) {
