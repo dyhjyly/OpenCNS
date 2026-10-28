@@ -65,18 +65,31 @@ export interface ChatResponse {
   timing: { recallMs: number; llmMs: number; totalMs: number; firstTokenMs?: number };
 }
 
-/** 上下文带多久的对话。48 小时够熟，再往前靠记忆 */
-const CONTEXT_HOURS = 48;
-/** 字数上限（够用就行，太多他自己也乱） */
-const CONTEXT_MAX_CHARS = 60_000;
+/**
+ * 上下文带多久的对话。
+ *
+ * 2026-10-28 改成 7 天。理由：周记是按周写的，48 小时窗口之外、
+ * 又还没进周记的那两天会落在缝里 —— 他接不上"前天说过的话"。
+ */
+const CONTEXT_HOURS = 24 * 7;
+/** 字数上限。7 天大概是 6~8 万字，留一点余量 */
+const CONTEXT_MAX_CHARS = 120_000;
+/**
+ * 无论如何至少带最近这么多条。
+ *
+ * 她说"只保留最近 20 条对话，保证对话的连续性"——这里当作**下限**：
+ * 就算时间窗口已经过了、或者字数超了，最近 20 条也一定在，不会断片。
+ */
+const CONTEXT_MIN_MESSAGES = 20;
 
 /**
  * 取这一轮要带进上下文的原文。
  *
- * 三条铁律（2026-10-20 定的）：
+ * 四条铁律：
  *   1. **每条都带时间戳** [10-19 21:03] —— 否则他把十天前的话当成"刚说的"。
  *   2. **落单的 assistant 丢掉** —— 它的提问被挤掉了，看起来就是半句话。
- *   3. 只留 48 小时。更早的交给记忆，不要再往上下文里堆。
+ *   3. 窗口 7 天；更早的交给记忆和周记。
+ *   4. 最近 20 条一定在（连续性的下限）。
  */
 async function loadContextHistory(
   sessionId: string,
@@ -97,13 +110,14 @@ async function loadContextHistory(
     if (last.role === 'user' && last.content.trim() === currentText.trim()) rows.pop();
   }
 
-  // 从最近往回取，超预算就停
+  // 从最近往回取：超字数预算才停，但前 CONTEXT_MIN_MESSAGES 条一律保留
   type Row = { role: string; content: string; at: Date | string };
   const picked: Row[] = [];
   let chars = 0;
   for (let i = rows.length - 1; i >= 0; i--) {
     const r = rows[i]!;
-    if (picked.length > 0 && chars + r.content.length > CONTEXT_MAX_CHARS) break;
+    const overBudget = chars + r.content.length > CONTEXT_MAX_CHARS;
+    if (overBudget && picked.length >= CONTEXT_MIN_MESSAGES) break;
     picked.push(r);
     chars += r.content.length;
   }
@@ -388,27 +402,19 @@ function stripLeadingStamp(s: string): string {
 /** 共同的收尾：落库回复、派生后台任务、记日志 */
 async function finalizeTurn(
   turn: PreparedTurn,
-  rawReply: string,
+  reply: string,
   timing: { llmMs: number; firstTokenMs?: number },
   reasoning?: string,
 ): Promise<ChatResponse> {
   /*
-   * 最后一道：把指代她的"她"改成"你"。
+   * 这里**不做任何改写**。
    *
-   * 提示词里早就写了这条规矩，但**演示比指令强** ——
-   * 喂给他的材料（身份提示、记忆、时间树、日记、他自己以前的话）全是第三人称，
-   * 满屏"她"，他照着学。所以除了改规则，这里再兜一次底。
-   * 没出现"她"就直接过，不额外花钱。
+   * 试过用一次模型调用把"她"批量改成"你"，被林遇否掉了：
+   *   "我要的是真实的对话，不是用工具改过的。如果他改不掉，
+   *    那就是提示词或者别的地方出了问题，我们再改。"
+   *
+   * 对。改出来的句子是系统的，不是他的。人称问题只能在提示词和材料上解决。
    */
-  let reply = rawReply;
-  try {
-    const { toSecondPerson } = await import('./second-person.js');
-    const fixed = await toSecondPerson(reply);
-    reply = fixed.text;
-  } catch {
-    /* 改写失败就用原文 */
-  }
-
   await appendMessage(turn.sessionId, 'assistant', stripLeadingStamp(reply), {
     source: 'chat',
     recalledIds: turn.recall.recalled.map((r) => r.id),
