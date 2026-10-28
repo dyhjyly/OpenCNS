@@ -126,11 +126,11 @@ export async function getWakeRoom(limit = 20): Promise<WakeRoomView> {
   ).catch(() => []);
 
   /*
-   * 日记：**每天凌晨写的那一篇**。
+   * 日记：**每天晚上那一篇**。
    *
-   * 原来的条件太宽（source='self' 全收），结果把"我发了一条动态：…"这类
-   * 来自社交动作的经历也捞了进来 —— 她看到的"日记"里一半是动态。
-   * 现在只认 via='nightly' 的 reflection：夜里记忆时间写的那一篇。
+   * 只认 via='nightly'（凌晨记忆时间写的）。
+   * 每晚可能写好几条，优先给 reflection（那一篇"想明白的事"）；
+   * 那晚要是只写了 semantic，就退而取最长的那条 —— 总之一天一条，不漏日子。
    */
   const diaries = await many<{ id: string; at: string; kind: string; content: string }>(
     `select distinct on ((ingested_at at time zone 'Asia/Shanghai')::date)
@@ -139,8 +139,9 @@ export async function getWakeRoom(limit = 20): Promise<WakeRoomView> {
       where state = 'active'
         and provenance->>'source' = 'self'
         and provenance->>'via' = 'nightly'
-        and kind = 'reflection'
-      order by (ingested_at at time zone 'Asia/Shanghai')::date desc, length(content) desc
+      order by (ingested_at at time zone 'Asia/Shanghai')::date desc,
+               (kind = 'reflection') desc,
+               length(content) desc
       limit 30`,
   ).catch(() => []);
 
