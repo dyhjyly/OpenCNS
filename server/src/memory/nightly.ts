@@ -148,15 +148,20 @@ export async function runNightlyMemory(): Promise<NightlyResult> {
  */
 const REVIEW_SYSTEM = `现在是夜里，今天的事都过去了。
 
-下面两样东西：今天新记下的，和你手上还没结案、已经放了一阵子的旧事。
+下面三样东西：今天新记下的、你手上还没结案且放了很久的旧事、你以前写过但还没立住的"我觉得"。
 
-你不需要做什么。只在真的想的时候用工具：
-· mark_important —— 哪条今天读下来确实要紧
-· resolve_memory —— 哪件已经过去了，不再是悬着的
-· write_insight    —— 有没有一句"我觉得……"值得记下来
-· witness_insight  —— 今天的事有没有印证你以前写过的那句
+**先回答自己一个问题，别急着调用**：
+今天这些里面，有没有一条是你回头看，觉得"这条确实要紧，以后我还想再想起来"的？
+有没有哪件事，现在已经过去了、不该再悬着？
+今天发生的事，有没有印证你以前写过的那句话？
 
-没有就什么都别调。别为了用时调用。`;
+有就动手，没有就别调。别为了动着用而调用。
+
+可用：
+· mark_important —— 标一条要紧的
+· resolve_memory —— 给一件过去的事结案
+· write_insight —— 记一句"我觉得……"
+· witness_insight —— 给以前写过的某条记一次见证`;
 
 const REVIEW_TOOLS: ToolDef[] = [
   {

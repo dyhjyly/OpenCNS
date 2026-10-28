@@ -258,12 +258,35 @@ export async function chatWithTools(
   if (ep.effort) body.effort = ep.effort;
 
   const started = Date.now();
-  const res = await fetch(`${ep.baseUrl}/chat/completions`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${ep.apiKey}` },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(opts.timeoutMs ?? 60_000),
-  });
+
+  /** 发一次请求 */
+  const send = async (): Promise<Response> =>
+    fetch(`${ep.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${ep.apiKey}` },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(opts.timeoutMs ?? 60_000),
+    });
+
+  let res = await send();
+
+  /*
+   * 思考模式（effort / thinking）**不支持指定 tool_choice**，
+   * 会直接 400：「Thinking mode does not support this tool_choice」。
+   *
+   * 所以强制调用只能当"尽量"用：被拒就退回 auto 再发一次，
+   * 不要因为一个保险手段把整轮工具调用弄挂。
+   */
+  if (!res.ok && opts.forceTool) {
+    const peek = await res.text().catch(() => '');
+    if (res.status === 400 && /tool_choice/i.test(peek)) {
+      log.warn('思考模式不支持强制 tool_choice，退回 auto', { tool: opts.forceTool });
+      body.tool_choice = 'auto';
+      res = await send();
+    } else {
+      throw new Error(`工具调用 HTTP ${res.status}: ${peek.slice(0, 200)}`);
+    }
+  }
 
   if (!res.ok) {
     const t = await res.text().catch(() => '');
