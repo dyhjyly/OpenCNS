@@ -64,6 +64,36 @@ const TOOLS: ToolDef[] = [
   {
     type: 'function',
     function: {
+      name: 'mark_important',
+      description:
+        '把某条记忆标成"这条确实要紧"。只在你自己读完、觉得它真的重要时才用——取出来看一眼不算，别顺手就标。',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: '记忆编号（recall_memory 返回里的那一串）' },
+        },
+        required: ['id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'resolve_memory',
+      description:
+        '把某条记忆结案：这件事已经过去了、不再悬着。结案后它会慢慢沉底，但不会被删。',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: '记忆编号' },
+        },
+        required: ['id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'get_moments',
       description: '看你们的朋友圈：最近的动态、她给你的评论、他回过的话。她没提就别查。',
       parameters: {
@@ -333,6 +363,27 @@ async function execTool(call: ToolCall): Promise<string> {
         .join('\n\n');
     }
 
+    case 'mark_important': {
+      const id = String(args.id ?? '').trim();
+      if (!id) return '（没给编号）';
+      const res = await query<{ id: string }>(
+        `update memory_items
+            set activation_count = activation_count + 1, last_recalled_at = now(), updated_at = now()
+          where id = $1::uuid
+          returning id::text`,
+        [id],
+      ).catch(() => null);
+      if (!res || res.rowCount === 0) return '（没找到这个编号，可能它已经不在了）';
+      return '标好了。这条以后会更常被你想起。';
+    }
+
+    case 'resolve_memory': {
+      const id = String(args.id ?? '').trim();
+      if (!id) return '（没给编号）';
+      await query(`select resolve_memory($1::uuid)`, [id]).catch(() => undefined);
+      return '结案了。它不会被删，只是慢慢沉下去。';
+    }
+
     case 'save_memory': {
       const { saveMemory } = await import('../memory/save.js');
       const content = pickContent(args);
@@ -489,6 +540,8 @@ function labelOf(name: string): string {
     case 'recall_memory': return '你翻出来的原文';
     case 'read_persona': return '你自己写下的设定';
     case 'recall_timeline': return '更早的周记 / 月档';
+    case 'mark_important': return '你标了重要';
+    case 'resolve_memory': return '你结案了';
     case 'get_moments': return '朋友圈';
     case 'get_sleep': return '她记的睡眠';
     case 'get_health': return '她记的身体数据';

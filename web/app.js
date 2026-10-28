@@ -1364,6 +1364,14 @@ async function pageMemoryReview(status = 'pending') {
     return;
   }
 
+  // 合并记录：他说"这条跟以前太像，我并进去了"的时候，这里能看到
+  let merges = { unseen: 0, merges: [] };
+  try {
+    merges = await api('/memory/merges?limit=20');
+  } catch {
+    /* 读不到就不显示这一段 */
+  }
+
   const kindName = { episode: '一段对话', semantic: '一件事', experience: '他的经历', reflection: '他的想法' };
   const viaName = { save_memory: '对话里记的', nightly: '凌晨写的' };
 
@@ -1384,6 +1392,28 @@ async function pageMemoryReview(status = 'pending') {
       <p>episode 必须同时有 quotes 和 causal，正文 ≥80 字；只想留一句话就用 semantic。
       没给日期会自动用当天。存进来的一律先落在待审，你点「通过」才进记忆库。</p>
     </details>
+
+    ${merges.merges.length ? `
+      <details class="mrv-fmt" ${merges.unseen > 0 ? 'open' : ''}>
+        <summary>合并记录${merges.unseen > 0 ? `（${merges.unseen} 条没看过）` : ''} —— 他写的东西跟以前太像时，会被并进旧的那条</summary>
+        <div class="mrv-merges">
+          ${merges.merges.map((g) => `
+            <div class="mrv-merge ${g.seen ? 'seen' : ''}">
+              <div class="mrv-merge-top">
+                <span class="mrv-kind">${(g.similarity * 100).toFixed(0)}% 像</span>
+                <span class="mrv-via">${esc({ save_memory: '对话里记的', nightly: '凌晨写的', approve: '你收下的' }[g.via] || g.via)}</span>
+                <span class="mrv-when">${fmt(g.at)}</span>
+              </div>
+              <div class="mrv-merge-body">
+                <div class="mrv-merge-label">并进了这条：</div>
+                <div class="mrv-merge-text">${esc(g.targetPreview)}…</div>
+                <div class="mrv-merge-label">新写的那段：</div>
+                <div class="mrv-merge-text">${esc(g.mergedText.slice(0, 160))}${g.mergedText.length > 160 ? '…' : ''}</div>
+              </div>
+            </div>`).join('')}
+        </div>
+        ${merges.unseen > 0 ? '<button class="mini" id="mrvSeenAll" style="margin-top:10px">都看过了</button>' : ''}
+      </details>` : ''}
 
     <div class="mrv-tabs">
       ${[['pending', `待审 ${d.pending}`], ['approved', '已通过'], ['rejected', '已驳回'], ['all', '全部']]
@@ -1431,6 +1461,14 @@ async function pageMemoryReview(status = 'pending') {
 
   const back = $('#rvBack');
   if (back) back.addEventListener('click', () => go('memory'));
+
+  const seenAll = $('#mrvSeenAll');
+  if (seenAll) {
+    seenAll.addEventListener('click', async () => {
+      await api('/memory/merges/seen', { method: 'POST', body: '{}' }).catch(() => {});
+      pageMemoryReview(status);
+    });
+  }
   main.querySelectorAll('[data-st]').forEach((b) =>
     b.addEventListener('click', () => pageMemoryReview(b.dataset.st)));
 
@@ -1499,13 +1537,17 @@ async function pageMemory() {
   const chips = $('#memChips');
   const listEl = $('#memList');
 
-  // 记忆审核入口：他写的东西先在那儿等她过一眼
+  // 记忆审核入口：他写的东西先在那儿等她过一眼；合并记录也算未读
   try {
-    const d = await api('/memory/drafts?status=pending&limit=1');
+    const [d, g] = await Promise.all([
+      api('/memory/drafts?status=pending&limit=1'),
+      api('/memory/merges?limit=1').catch(() => ({ unseen: 0 })),
+    ]);
     const btn = $('#memReview');
     if (btn) {
-      btn.textContent = d.pending > 0 ? `审核 ${d.pending}` : '审核';
-      if (d.pending > 0) btn.classList.add('has-dot');
+      const n = (d.pending || 0) + (g.unseen || 0);
+      btn.textContent = n > 0 ? `审核 ${n}` : '审核';
+      if (n > 0) btn.classList.add('has-dot');
       btn.addEventListener('click', () => pageMemoryReview());
     }
   } catch {

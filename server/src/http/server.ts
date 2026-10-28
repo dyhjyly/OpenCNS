@@ -836,6 +836,31 @@ export function startHttpServer(): Server {
     }
   });
 
+  /* ─── 合并记录（她说"合并了告诉我"）─── */
+  app.get('/memory/merges', requireToken, async (req, res) => {
+    try {
+      const { listMerges, unseenMergeCount } = await import('../memory/merge.js');
+      return res.json({
+        ok: true,
+        unseen: await unseenMergeCount(),
+        merges: await listMerges(Math.min(60, Number(req.query.limit ?? 30))),
+      });
+    } catch (err) {
+      return res.status(500).json(errFields(err));
+    }
+  });
+
+  app.post('/memory/merges/seen', requireToken, async (req, res) => {
+    try {
+      const { markMergesSeen } = await import('../memory/merge.js');
+      const ids = (req.body as { ids?: string[] })?.ids;
+      await markMergesSeen(Array.isArray(ids) ? ids : undefined);
+      return res.json({ ok: true });
+    } catch (err) {
+      return res.status(500).json(errFields(err));
+    }
+  });
+
   /* ─── 记忆审核（他写的先给她看）─── */
   app.get('/memory/drafts', requireToken, async (req, res) => {
     try {

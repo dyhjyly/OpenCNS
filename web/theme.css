@@ -924,6 +924,18 @@ body.mom-manage .mom-item { padding-top: 26px }
   font-family: var(--f-body-en); font-size: 13px; outline: none;
 }
 
+/* 合并记录 */
+.mrv-merges { display: flex; flex-direction: column; gap: 10px; margin-top: 10px }
+.mrv-merge {
+  border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px;
+  background: color-mix(in srgb, var(--bg2) 55%, transparent);
+}
+.mrv-merge.seen { opacity: .55 }
+.mrv-merge-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px }
+.mrv-merge-body { font-size: 12px; line-height: 1.7 }
+.mrv-merge-label { color: var(--muted); font-size: 10.5px; margin-top: 6px }
+.mrv-merge-text { color: var(--text) }
+
 /* ═══════════════ 记忆审核 ═══════════════ */
 /* 整页必须有一个块级根容器：#main 在某些页会被当 flex 行项目，
    直接把几块塞进去会被拉成长条、标题挤成竖排。 */

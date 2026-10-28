@@ -459,7 +459,14 @@ export async function recall(userMessage: string, opts: { limit?: number } = {})
       log.info('只有一条候选且不够强，不递', { score: only.score, similarity: only.similarity });
       return { ...empty, byRoute, droppedByCooldown, emotionRouteAllowed: explicit, judgeReason: '唯一候选不够强' };
     }
-    await query(`select reinforce_memory($1, true, 1.5)`, [only.id]).catch(() => undefined);
+    /*
+     * 只记曝光、不强化。
+     *
+     * 参照 Ombre-Brain：检索是"我去找它"，强化是"找到之后这条确实要紧"，
+     * 两件事必须分开 —— 他们踩过坑，把两者绑在一起之后，
+     * 被频繁查询的旧桶权重积到 51，新桶再也排不进浮现区。
+     */
+    await query(`select touch_exposure($1, 1.5)`, [only.id]).catch(() => undefined);
     return {
       recalled: [only],
       candidates: 1,
@@ -509,12 +516,12 @@ export async function recall(userMessage: string, opts: { limit?: number } = {})
 
   const recalled = selectedIds.map((id) => top.find((c) => c.id === id)!).filter(Boolean);
 
-  // 只给"真的用上"的加重要度，且带冷却（曝光越多冷却越长）
+  // 只记曝光（用于冷却，避免同一段反复出现），**不加强化、不动权重**。
   for (const item of recalled) {
     try {
-      await query(`select reinforce_memory($1, true, 6)`, [item.id]);
+      await query(`select touch_exposure($1, 6)`, [item.id]);
     } catch (err) {
-      log.warn('强化失败', { id: item.id, ...errFields(err) });
+      log.warn('记录曝光失败', { id: item.id, ...errFields(err) });
     }
   }
 

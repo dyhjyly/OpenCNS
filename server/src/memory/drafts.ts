@@ -91,7 +91,7 @@ export async function pendingCount(): Promise<number> {
 export async function approveDraft(
   id: string,
   patch?: { content?: string; eventTime?: string; kind?: string; importance?: number },
-): Promise<{ ok: boolean; memoryId?: string; error?: string }> {
+): Promise<{ ok: boolean; memoryId?: string; merged?: boolean; error?: string }> {
   const d = await one<{
     id: string;
     kind: string;
@@ -133,6 +133,33 @@ export async function approveDraft(
   }
 
   try {
+    /*
+     * 批准入库前先合并：跟她记过的太像就并进去，不另开一条。
+     * 合并记录会出现在「记忆审核 → 合并记录」里，她能看见。
+     */
+    try {
+      const { mergeOrCreate } = await import('./merge.js');
+      const out = await mergeOrCreate({
+        kind,
+        content,
+        quotes: (Array.isArray(d.quotes) ? d.quotes : []) as { who: string; text: string }[],
+        causal: d.causal,
+        eventTime,
+        importance,
+        via: d.via || 'approve',
+        embedding: vec,
+      });
+      if (out.merged && out.memoryId) {
+        await query(
+          `update memory_drafts set status = 'approved', reviewed_at = now(), memory_id = $2 where id = $1::uuid`,
+          [id, out.memoryId],
+        );
+        return { ok: true, memoryId: out.memoryId, merged: true };
+      }
+    } catch (err) {
+      log.warn('审核合并判定失败，照常新建', errFields(err));
+    }
+
     /*
      * 注意：memory_items.causal 是 **jsonb**（存四环对象 happened/reaction/act/outcome），
      * 而草稿里存的是纯文本。

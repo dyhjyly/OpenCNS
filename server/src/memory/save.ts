@@ -121,6 +121,31 @@ export async function saveMemory(input: SaveMemoryInput): Promise<string> {
     log.warn('存记忆时嵌入失败，先不带向量', errFields(err));
   }
 
+  /*
+   * 写入前先合并。
+   *
+   * 参照 Ombre-Brain 的 _merge_or_create：太像就并进已有那条，不像才新建。
+   * 我们要解决的正是"同一件事说三遍变成三条记忆"。
+   */
+  try {
+    const { mergeOrCreate } = await import('./merge.js');
+    const out = await mergeOrCreate({
+      kind,
+      content,
+      quotes,
+      causal: causal || null,
+      eventTime,
+      importance: Math.min(1, Math.max(0.1, input.importance ?? 0.5)),
+      via,
+      embedding,
+    });
+    if (out.merged && out.memoryId) {
+      return `这条跟你记过的太像了（${(out.similarity! * 100).toFixed(0)}%），我并进那一条里了，没另开一条。`;
+    }
+  } catch (err) {
+    log.warn('合并判定失败，照常新建', errFields(err));
+  }
+
   try {
     const row = await one<{ id: string }>(
       /*
