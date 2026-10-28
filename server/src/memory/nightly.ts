@@ -1,5 +1,5 @@
-import { many } from '../db/pool.js';
-import { chatText, chatWithTools, type ToolDef } from '../llm/client.js';
+import { many, one } from '../db/pool.js';
+import { chatText, chatJson } from '../llm/client.js';
 import { log, errFields } from '../logger.js';
 
 /**
@@ -163,57 +163,6 @@ const REVIEW_SYSTEM = `现在是夜里，今天的事都过去了。
 · write_insight —— 记一句"我觉得……"
 · witness_insight —— 给以前写过的某条记一次见证`;
 
-const REVIEW_TOOLS: ToolDef[] = [
-  {
-    type: 'function',
-    function: {
-      name: 'mark_important',
-      description: '把某条记忆标成"这条确实要紧"',
-      parameters: {
-        type: 'object',
-        properties: { id: { type: 'string' } },
-        required: ['id'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'resolve_memory',
-      description: '把某条记忆结案：这件事已经过去了',
-      parameters: {
-        type: 'object',
-        properties: { id: { type: 'string' } },
-        required: ['id'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'write_insight',
-      description: '记下一句"我觉得……"（关于你自己、关于她）',
-      parameters: {
-        type: 'object',
-        properties: { content: { type: 'string' } },
-        required: ['content'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'witness_insight',
-      description: '今天的事印证了以前某条"我觉得"，给它记一次见证',
-      parameters: {
-        type: 'object',
-        properties: { id: { type: 'string' }, source_id: { type: 'string' } },
-        required: ['id'],
-      },
-    },
-  },
-];
-
 async function runEveningReview(today: string): Promise<void> {
   const fresh = await many<{ id: string; content: string }>(
     `select id::text, left(content, 160) as content
@@ -249,55 +198,69 @@ async function runEveningReview(today: string): Promise<void> {
         .join('\n')}`,
     );
 
-  const out = await chatWithTools(
-    [
-      { role: 'system', content: REVIEW_SYSTEM },
-      { role: 'user', content: parts.join('\n\n') },
-    ],
-    REVIEW_TOOLS,
-    {
-      // 走对话端点：认知端点是思考模式，会把预算烧在推理上，
-      // 结果 content 空、tool_calls 也空（实测就是这个）。
-      endpoint: 'chat',
-      temperature: 0.4,
-      maxTokens: 1500,
-      label: 'nightly-review',
-    },
-  );
-
-  if (out.toolCalls.length === 0) {
-    // 留证：他"没动"是判断，还是根本没看懂要干什么
-    log.info('凌晨复盘：他没动', { 说了什么: (out.content ?? '').replace(/\s+/g, ' ').slice(0, 160) });
+  /*
+   * 这里**不走工具调用**。
+   *
+   * 实测：同一批候选喂进去，工具调用稳定返回空（0 个 call、content 也是空），
+   * 换成短样例又能调通 —— 长中文清单上这条路不可靠。
+   * 改成"只输出 JSON"，我们自己解析、自己落库，稳得多。
+   */
+  let parsed: { important?: string[]; resolved?: string[]; insight?: string; witness?: string[] } = {};
+  try {
+    parsed = await chatJson<typeof parsed>(
+      [
+        { role: 'system', content: REVIEW_SYSTEM },
+        { role: 'user', content: parts.join('\n\n') },
+      ],
+      { endpoint: 'chat', temperature: 0.4, maxTokens: 800, label: 'nightly-review' },
+    );
+  } catch (err) {
+    log.warn('凌晨复盘解析失败', errFields(err));
     return;
   }
 
-  for (const call of out.toolCalls.slice(0, 6)) {
-    const a = parseArgs(call.arguments);
-    try {
-      if (call.name === 'mark_important') {
-        const { query } = await import('../db/pool.js');
-        await query(
-          `update memory_items set activation_count = activation_count + 1, last_recalled_at = now(), updated_at = now()
-            where id::text like $1`,
-          [`${String(a.id ?? '').trim()}%`],
-        );
-      } else if (call.name === 'resolve_memory') {
-        const { query } = await import('../db/pool.js');
-        await query(`update memory_items set resolved_at = now(), updated_at = now() where id::text like $1`, [
-          `${String(a.id ?? '').trim()}%`,
-        ]);
-      } else if (call.name === 'write_insight') {
-        const { writeInsight } = await import('./insights.js');
-        const text = String(a.content ?? '').trim();
-        if (text) await writeInsight(text);
-      } else if (call.name === 'witness_insight') {
-        const { witnessInsight } = await import('./insights.js');
-        const id = String(a.id ?? '').trim();
-        if (id) await witnessInsight(id, typeof a.source_id === 'string' ? a.source_id : undefined);
-      }
-    } catch (err) {
-      log.warn('凌晨复盘里某个动作失败', { name: call.name, ...errFields(err) });
+  const important = (parsed.important ?? []).filter((x) => typeof x === 'string').slice(0, 4);
+  const resolved = (parsed.resolved ?? []).filter((x) => typeof x === 'string').slice(0, 4);
+  const witness = (parsed.witness ?? []).filter((x) => typeof x === 'string').slice(0, 3);
+  const insight = typeof parsed.insight === 'string' ? parsed.insight.trim() : '';
+
+  if (important.length + resolved.length + witness.length === 0 && !insight) {
+    log.info('凌晨复盘：他没动');
+    return;
+  }
+
+  const { query } = await import('../db/pool.js');
+  for (const id8 of important) {
+    await query(
+      `update memory_items
+          set activation_count = activation_count + 1, last_recalled_at = now(), updated_at = now()
+        where id::text like $1`,
+      [`${id8}%`],
+    ).catch(() => undefined);
+  }
+  for (const id8 of resolved) {
+    await query(`update memory_items set resolved_at = now(), updated_at = now() where id::text like $1`, [
+      `${id8}%`,
+    ]).catch(() => undefined);
+  }
+  if (insight.length >= 6) {
+    const { writeInsight } = await import('./insights.js');
+    await writeInsight(insight).catch(() => undefined);
+  }
+  if (witness.length > 0) {
+    const { witnessInsight } = await import('./insights.js');
+    for (const id8 of witness) {
+      const row = await one<{ id: string }>(`select id::text from insights where id::text like $1 limit 1`, [
+        `${id8}%`,
+      ]).catch(() => null);
+      if (row) await witnessInsight(row.id).catch(() => undefined);
     }
   }
-  log.info('凌晨复盘：动了几样', { calls: out.toolCalls.map((c) => c.name).join(',') });
+
+  log.info('凌晨复盘：他动了', {
+    标要紧: important.length,
+    结案: resolved.length,
+    新想法: insight ? 1 : 0,
+    见证: witness.length,
+  });
 }
