@@ -259,7 +259,8 @@ async function runEveningReview(today: string): Promise<void> {
   );
 
   if (out.toolCalls.length === 0) {
-    log.info('凌晨复盘：他什么都没动');
+    // 留证：他"没动"是判断，还是根本没看懂要干什么
+    log.info('凌晨复盘：他没动', { 说了什么: (out.content ?? '').replace(/\s+/g, ' ').slice(0, 160) });
     return;
   }
 
