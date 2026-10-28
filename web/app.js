@@ -2823,8 +2823,9 @@ function go(page) {
   setHeader(page);
   document.body.classList.toggle('chat-mode', page === 'chat');
   document.body.classList.toggle('memory-mode', page === 'memory');
+  // 抽屉按钮：除了聊天页（会压住输入框），其它页面都留着
   const fab = $('#fab');
-  if (fab) fab.hidden = page !== 'home';
+  if (fab) fab.hidden = page === 'chat';
   const p = PAGES[page]();
   if (p && p.catch) p.catch(() => {});
   $('#main').scrollTop = 0;

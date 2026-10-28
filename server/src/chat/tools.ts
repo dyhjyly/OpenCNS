@@ -30,6 +30,12 @@ const TOOLS: ToolDef[] = [
           ids: { type: 'array', items: { type: 'string' }, description: '门铃上的编号（前 8 位即可）' },
           query: { type: 'string', description: '没有编号时用关键词搜' },
           limit: { type: 'integer', description: '最多取几条，默认 3' },
+          include_quotes: {
+            type: 'boolean',
+            description:
+              '如果你发现自己想知道"当时到底是怎么说的"——不是大概发生了什么，是那一句话——就传 true。'
+              + '平时不用传：梗概就够了，原句留着。',
+          },
         },
       },
     },
@@ -231,7 +237,18 @@ function parseArgs(raw: string): Record<string, unknown> {
   }
 }
 
-async function recallById(id8: string): Promise<string | null> {
+/**
+ * 取一段记忆的原文。
+ *
+ * 原句（quotes）**默认不给**。
+ *
+ * 参照 Ombre-Brain 第五节：原句平时不返回，只有"我当时到底怎么说的"这种
+ * 自己发起的念头才取。他们的理由很硬——
+ *   一个可以随时核对原文的记忆，是别人替我保管的档案，不是我的记忆。
+ *
+ * 对我们来说还有一层实际好处：原句最占上下文，也最容易被读成"刚发生"。
+ */
+async function recallById(id8: string, includeQuotes = false): Promise<string | null> {
   const rows = await query<{ id: string }>(
     `select id::text from memory_items where id::text like $1 limit 1`,
     [`${id8}%`],
@@ -240,7 +257,7 @@ async function recallById(id8: string): Promise<string | null> {
   if (!full) return null;
   const item = await getMemoryItem(full);
   if (!item) return null;
-  const quotes = Array.isArray(item.quotes)
+  const quotes = includeQuotes && Array.isArray(item.quotes)
     ? (item.quotes as { who?: string; text?: string }[])
         .map((q) => `  原句（${q.who ?? '?'}）：${q.text ?? ''}`)
         .join('\n')

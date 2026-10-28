@@ -346,6 +346,32 @@ export async function recall(userMessage: string, opts: { limit?: number } = {})
     }
   }
 
+  /*
+   * G BM25 稀疏检索（3.0 加）
+   *
+   * 补关键词路的短板：ILIKE 是硬匹配，换个说法就认不出；
+   * 向量路又容易把"感觉像"但没说到点上的排上来。
+   * BM25 按词频和稀有度打分，介于两者之间。
+   */
+  let bm25Rows: Row[] = [];
+  try {
+    const { bm25Search } = await import('./bm25.js');
+    const hits = await bm25Search(userMessage, explicit ? 14 : 8);
+    if (hits.length > 0) {
+      const ids = hits.map((h) => h.id);
+      const rows = await many<Row>(
+        `select ${SELECT_COLS} from memory_items
+          where id = any($1::uuid[]) and state in ('active','archived')`,
+        [ids],
+      );
+      const scoreById = new Map(hits.map((h) => [h.id, h.score]));
+      bm25Rows = rows.map((r) => ({ ...r, similarity: scoreById.get(r.id) ?? 0 }));
+      byRoute.bm25 = bm25Rows.length;
+    }
+  } catch (err) {
+    log.error('BM25 召回失败', errFields(err));
+  }
+
   // 合并去重
   const merged = new Map<string, { row: Row; routes: string[]; similarity: number }>();
   const add = (rows: Row[], route: string) => {
@@ -367,6 +393,7 @@ export async function recall(userMessage: string, opts: { limit?: number } = {})
   add(assocRows, 'association');
   add(recencyRows, 'recency');
   add(contentRows, 'content');
+  add(bm25Rows, 'bm25');
 
   // 两层克制：冷却过滤
   //

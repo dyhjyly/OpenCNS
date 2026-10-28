@@ -943,6 +943,13 @@ body.mom-manage .mom-item { padding-top: 26px }
   display: block;
   width: 100%;
   min-width: 0;
+  /* 记忆库那一页给 body 加了 memory-mode（#main 定高 + overflow:hidden），
+     所以这里必须自己滚，否则审核页拉不到底。 */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 4px 2px 32px;
 }
 
 .mrv-fmt {
