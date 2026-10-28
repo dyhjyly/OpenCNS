@@ -1,5 +1,5 @@
 import { many } from '../db/pool.js';
-import { chatText } from '../llm/client.js';
+import { chatText, chatWithTools, type ToolDef } from '../llm/client.js';
 import { log, errFields } from '../logger.js';
 
 /**
@@ -36,6 +36,16 @@ export interface NightlyResult {
   skipped: boolean;
   calls: number;
   messages: string[];
+}
+
+/** 模型有时把参数包成别的形状，这里兜住 */
+function parseArgs(raw: string): Record<string, unknown> {
+  try {
+    const v = JSON.parse(raw);
+    return v && typeof v === 'object' ? (v as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
 }
 
 export async function runNightlyMemory(): Promise<NightlyResult> {
@@ -111,9 +121,170 @@ export async function runNightlyMemory(): Promise<NightlyResult> {
     );
 
     log.info('凌晨日记写好了', { chars: body.length, date: today });
+
+    // 日记写完之后，再让他过一遍今天的记忆 —— 见 runEveningReview
+    try {
+      await runEveningReview(today);
+    } catch (err) {
+      log.warn('凌晨复盘失败（不影响日记）', errFields(err));
+    }
+
     return { saved: 1, skipped: false, calls: 1, messages: ['日记已写'] };
   } catch (err) {
     log.error('凌晨日记写库失败', errFields(err));
     return { saved: 0, skipped: false, calls: 1, messages: [`写库失败：${String((err as Error)?.message ?? err).slice(0, 80)}`] };
   }
+}
+
+/**
+ * 凌晨复盘：让 mark_important / resolve_memory / write_insight 真的被用上。
+ *
+ * 为什么要有这一步：这三个工具放进清单之后**一次都没被调用过**（实测 0 次）。
+ * 原因是工具路由在回复之前跑，它只决定"要不要取记忆"，
+ * 而"这条重不重要""这件事过去没有"是**读完之后的判断**，路由那一刻根本不存在。
+ *
+ * 所以改成一个固定时刻：夜里把今天的事摆出来，让他自己过一遍。
+ * 什么都不做也是正当选择。
+ */
+const REVIEW_SYSTEM = `现在是夜里，今天的事都过去了。
+
+下面两样东西：今天新记下的，和你手上还没结案、已经放了一阵子的旧事。
+
+你不需要做什么。只在真的想的时候用工具：
+· mark_important —— 哪条今天读下来确实要紧
+· resolve_memory —— 哪件已经过去了，不再是悬着的
+· write_insight    —— 有没有一句"我觉得……"值得记下来
+· witness_insight  —— 今天的事有没有印证你以前写过的那句
+
+没有就什么都别调。别为了用时调用。`;
+
+const REVIEW_TOOLS: ToolDef[] = [
+  {
+    type: 'function',
+    function: {
+      name: 'mark_important',
+      description: '把某条记忆标成"这条确实要紧"',
+      parameters: {
+        type: 'object',
+        properties: { id: { type: 'string' } },
+        required: ['id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'resolve_memory',
+      description: '把某条记忆结案：这件事已经过去了',
+      parameters: {
+        type: 'object',
+        properties: { id: { type: 'string' } },
+        required: ['id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'write_insight',
+      description: '记下一句"我觉得……"（关于你自己、关于她）',
+      parameters: {
+        type: 'object',
+        properties: { content: { type: 'string' } },
+        required: ['content'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'witness_insight',
+      description: '今天的事印证了以前某条"我觉得"，给它记一次见证',
+      parameters: {
+        type: 'object',
+        properties: { id: { type: 'string' }, source_id: { type: 'string' } },
+        required: ['id'],
+      },
+    },
+  },
+];
+
+async function runEveningReview(today: string): Promise<void> {
+  const fresh = await many<{ id: string; content: string }>(
+    `select id::text, left(content, 160) as content
+       from memory_items
+      where state = 'active' and (event_time at time zone 'Asia/Shanghai')::date = $1::date
+      order by importance desc limit 12`,
+    [today],
+  ).catch(() => []);
+
+  const stale = await many<{ id: string; content: string }>(
+    `select id::text, left(content, 120) as content
+       from memory_items
+      where state = 'active' and resolved_at is null and importance >= 0.4
+        and coalesce(last_recalled_at, ingested_at) < now() - interval '7 days'
+      order by importance desc limit 8`,
+  ).catch(() => []);
+
+  if (fresh.length === 0 && stale.length === 0) return;
+
+  const pending = await many<{ id: string; content: string; witness_count: number }>(
+    `select id::text, left(content, 120) as content,
+            jsonb_array_length(witness_days) as witness_count
+       from insights where status = 'candidate' order by created_at desc limit 5`,
+  ).catch(() => []);
+
+  const parts: string[] = [];
+  if (fresh.length) parts.push(`【今天新记下的】\n${fresh.map((r) => `· ${r.id.slice(0, 8)}｜${r.content}`).join('\n')}`);
+  if (stale.length) parts.push(`【还没结案、放了很久的】\n${stale.map((r) => `· ${r.id.slice(0, 8)}｜${r.content}`).join('\n')}`);
+  if (pending.length)
+    parts.push(
+      `【你以前写过、还没立住的"我觉得"】\n${pending
+        .map((r) => `· ${r.id.slice(0, 8)}｜见证 ${r.witness_count}/3｜${r.content}`)
+        .join('\n')}`,
+    );
+
+  const out = await chatWithTools(
+    [
+      { role: 'system', content: REVIEW_SYSTEM },
+      { role: 'user', content: parts.join('\n\n') },
+    ],
+    REVIEW_TOOLS,
+    { endpoint: 'cognitive', temperature: 0.3, maxTokens: 800, label: 'nightly-review' },
+  );
+
+  if (out.toolCalls.length === 0) {
+    log.info('凌晨复盘：他什么都没动');
+    return;
+  }
+
+  for (const call of out.toolCalls.slice(0, 6)) {
+    const a = parseArgs(call.arguments);
+    try {
+      if (call.name === 'mark_important') {
+        const { query } = await import('../db/pool.js');
+        await query(
+          `update memory_items set activation_count = activation_count + 1, last_recalled_at = now(), updated_at = now()
+            where id::text like $1`,
+          [`${String(a.id ?? '').trim()}%`],
+        );
+      } else if (call.name === 'resolve_memory') {
+        const { query } = await import('../db/pool.js');
+        await query(`update memory_items set resolved_at = now(), updated_at = now() where id::text like $1`, [
+          `${String(a.id ?? '').trim()}%`,
+        ]);
+      } else if (call.name === 'write_insight') {
+        const { writeInsight } = await import('./insights.js');
+        const text = String(a.content ?? '').trim();
+        if (text) await writeInsight(text);
+      } else if (call.name === 'witness_insight') {
+        const { witnessInsight } = await import('./insights.js');
+        const id = String(a.id ?? '').trim();
+        if (id) await witnessInsight(id, typeof a.source_id === 'string' ? a.source_id : undefined);
+      }
+    } catch (err) {
+      log.warn('凌晨复盘里某个动作失败', { name: call.name, ...errFields(err) });
+    }
+  }
+  log.info('凌晨复盘：动了几样', { calls: out.toolCalls.map((c) => c.name).join(',') });
 }

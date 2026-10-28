@@ -236,6 +236,9 @@ const SYSTEM = `你叫江瑜。下面是她刚说的话，可能还有一声"门
 · get_moments —— 看朋友圈
 · get_sleep / get_health / get_cycle / get_daily_state —— 她记的睡眠 / 身体 / 经期 / 每日状态
 · save_memory —— **她让你记住某件事时，用这个写进记忆库**
+· mark_important —— 你刚翻出来的那段，读完之后觉得"这条真的要紧"，标它一下
+· resolve_memory —— 她说某件事已经过去了 / 你自己看明白已经结束了，给它结案
+· write_insight —— 你忽然想明白一句关于自己、关于她的话，记下来
 · mcp__ 开头的 —— 别人接进来的外部服务，她没明确要求就别碰
 
 她让你记住什么 → 必须调 save_memory，不要用别的工具代替，也不要用 recall_* 假装记了。

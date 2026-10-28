@@ -111,23 +111,23 @@ function buildJobs(): JobDefinition[] {
       },
     },
     {
-      // M5+：周记。**固定时间他自己写**，不是等下周补。
-      // 周日 23 点那一档写"这一周"（周一到今天），其余时间只做补齐。
+      // M5+：周记。**固定时间他自己写**，不占日常聊天的时间。
+      // 周一凌晨 3 点写刚过完的那一周（林遇定的：周日夜里写会打断聊天）。
       key: 'weekly_journal',
       kind: 'memory',
       everyMs: 30 * 60_000,
       async run() {
         const { hourNow, ranToday, markRan } = await import('./guard.js');
         const h = await hourNow();
-        // 周日 = extract(dow)=0。只在周日 23:00~23:59 这一档写
+        // 周一 = extract(dow)=1。只在周一 03:00~03:59 这一档写
         const dow = await one<{ d: number }>(
           `select extract(dow from (now() at time zone 'Asia/Shanghai'))::int as d`,
         );
-        if (dow?.d !== 0 || h !== 23) return;
+        if (dow?.d !== 1 || h !== 3) return;
         if (await ranToday('weekly_journal')) return;
 
-        const { buildCurrentWeek } = await import('../memory/timeline/build.js');
-        const r = await buildCurrentWeek();
+        const { buildPreviousWeek } = await import('../memory/timeline/build.js');
+        const r = await buildPreviousWeek();
         await markRan('weekly_journal', { built: r.built, label: r.label, memories: r.memories });
         // 写完了立刻生效，不等缓存过期
         invalidateTimelineCache();
