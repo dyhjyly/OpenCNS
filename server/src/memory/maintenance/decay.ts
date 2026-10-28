@@ -24,6 +24,7 @@ import { log } from '../../logger.js';
 export interface DecayResult {
   rescored: number;
   autoResolved: number;
+  revived: number;
   archived: number;
   pruned: number;
   revivedPinned: number;
@@ -71,7 +72,7 @@ export async function runDecay(): Promise<DecayResult> {
                     else (1.0 + coalesce(m.emotion_arousal, 0) * 0.8) * 0.7
                          + (1.0 + exp(-extract(epoch from (now() - coalesce(m.last_recalled_at, m.ingested_at))) / 129600.0)) * 0.3
                   end
-                ) / 1.7
+                )
               * (case when m.resolved_at is not null then 0.05 else 1.0 end)
               * (case when coalesce(m.emotion_arousal, 0) > 0.7 and m.resolved_at is null then 1.5 else 1.0 end)
             )),
@@ -81,7 +82,19 @@ export async function runDecay(): Promise<DecayResult> {
       returning m.id`,
   );
 
-  // 3) 活跃 -> 归档
+  // 3) 归档里分数回升的，放回活跃池
+  //
+  // 纯函数的分数只会随时间下降，唯一能让它回升的是 activation（他明确说"这条要紧"）
+  // 或者她审核时的收下。所以这一步等于：**只要有人重新认定它重要，它就回来。**
+  const revived = await many<{ id: string }>(
+    `update memory_items
+        set state = 'active', updated_at = now()
+      where state = 'archived' and not pinned and resolved_at is null and decay_score >= $1
+      returning id`,
+    [ARCHIVE_BELOW],
+  );
+
+  // 4) 活跃 -> 归档
   const archived = await many<{ id: string }>(
     `update memory_items
         set state = 'archived', updated_at = now()
@@ -117,6 +130,7 @@ export async function runDecay(): Promise<DecayResult> {
   const result: DecayResult = {
     rescored: rescored.length,
     autoResolved: autoResolved.length,
+    revived: revived.length,
     archived: archived.length,
     pruned: pruned.length,
     revivedPinned: pinned.length,
