@@ -90,15 +90,15 @@ export async function saveMemory(input: SaveMemoryInput): Promise<string> {
   if (!eventTime) eventTime = new Date().toISOString();
 
   /*
-   * 他自己写的记忆先落进"待审"，等林遇看过才进正式记忆库。
+   * 他自己在对话里写的记忆先落进"待审"，等林遇看过才进正式记忆库。
    *
-   * 她的原话："我不知道他是不是每次记忆都没存进去，我查不到，
-   * 在记忆库模块中另加一个记忆审核，他存的记忆都交给我看一遍，我再存进去。"
-   *
-   * 注意：醒来时自动生成的经历（via='wake'）不进审核 —— 那是流水，不是"他写的"。
+   * 但**凌晨的记忆时间（nightly）不进审核** —— 那是他的日记：
+   *   · 日记页读的是正式记忆库，进了待审就永远不更新（她实测发现日记停更）
+   *   · 每晚 3~4 条，让她一条条点通过太累
+   * 所以 nightly 直接写库，之后她可以在「记忆整理」里翻和删。
    */
   const via = input.via ?? 'save_memory';
-  if (via === 'save_memory' || via === 'nightly') {
+  if (via === 'save_memory') {
     const { createDraft } = await import('./drafts.js');
     const draftId = await createDraft({
       kind,

@@ -101,8 +101,9 @@ export async function approveDraft(
     event_time: string | null;
     importance: number;
     status: string;
+    via: string;
   }>(
-    `select id::text, kind, content, quotes, causal, event_time, importance, status
+    `select id::text, kind, content, quotes, causal, event_time, importance, status, via
        from memory_drafts where id = $1::uuid`,
     [id],
   );
@@ -159,7 +160,7 @@ export async function approveDraft(
         eventTime ? 'exact' : 'day',
         importance,
         vec,
-        JSON.stringify({ source: 'self', via: 'approved_draft' }),
+        JSON.stringify({ source: 'self', via: d.via, approved: true }),
       ],
     );
     if (!mem) return { ok: false, error: '写进记忆库失败' };
