@@ -30,6 +30,7 @@ export interface WakeRoomView {
   pats: { at: string; suffix: string | null }[];
   /** 他凌晨写下的日记（每日记忆） */
   diaries: { id: string; at: string; kind: string; content: string }[];
+  insights: { id: string; content: string; status: string; witnessCount: number }[];
   counts: { wakes: number; decided: number; skipped: number };
 }
 
@@ -152,6 +153,22 @@ export async function getWakeRoom(limit = 20): Promise<WakeRoomView> {
     lockedSurprises: locked,
     pats,
     diaries: diaries.map((d) => ({ id: d.id, at: d.at, kind: d.kind, content: d.content })),
+    insights: (await insightsRows()).map((i) => ({
+      id: i.id,
+      content: i.content,
+      status: i.status,
+      witnessCount: Array.isArray(i.witness_days) ? (i.witness_days as string[]).length : 0,
+    })),
     counts: counts ?? { wakes: 0, decided: 0, skipped: 0 },
   };
+}
+
+/** 他自己想明白过的事（已立住 + 候选），给房间那一段用 */
+async function insightsRows(): Promise<{ id: string; content: string; status: string; witness_days: unknown }[]> {
+  return many<{ id: string; content: string; status: string; witness_days: unknown }>(
+    `select id::text, content, status, witness_days
+       from insights where status <> 'dropped'
+      order by (status = 'established') desc, created_at desc
+      limit 12`,
+  ).catch(() => []);
 }

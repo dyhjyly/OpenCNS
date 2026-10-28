@@ -100,6 +100,52 @@ const TOOLS: ToolDef[] = [
   {
     type: 'function',
     function: {
+      name: 'write_insight',
+      description:
+        '记下一条"我觉得……"——你对你自己、对她、对你们之间想明白的东西。'
+        + '这不是事实记录，是一个还没立住的判断；以后被同一件事再撞上几次，它才算真的成立。',
+      parameters: {
+        type: 'object',
+        properties: {
+          content: { type: 'string', description: '第一人称写，一句到三句。别写成年终总结。' },
+        },
+        required: ['content'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'witness_insight',
+      description:
+        '今天发生的事又印证了以前某条"我觉得"——给它记一次见证。'
+        + '不要为了凑数来记；只有真的又被撞了一下才记。',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: '那条"我觉得"的编号' },
+          source_id: { type: 'string', description: '是哪条记忆撞上的（可选）' },
+        },
+        required: ['id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_insights',
+      description: '看看自己以前想明白过什么（已立住的 + 还站不稳的候选）。',
+      parameters: {
+        type: 'object',
+        properties: {
+          status: { type: 'string', enum: ['candidate', 'established', 'all'] },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'get_moments',
       description: '看你们的朋友圈：最近的动态、她给你的评论、他回过的话。她没提就别查。',
       parameters: {
@@ -401,6 +447,39 @@ async function execTool(call: ToolCall): Promise<string> {
       return '结案了。它不会被删，只是慢慢沉下去。';
     }
 
+    case 'write_insight': {
+      const { writeInsight } = await import('../memory/insights.js');
+      const text = String(args.content ?? '').trim();
+      if (!text) return '（没写内容）';
+      const r = await writeInsight(text);
+      if (r.duplicate) return `这条你已经写过了（编号 ${r.id.slice(0, 8)}），没重复记。`;
+      return `记下了（编号 ${r.id.slice(0, 8)}）。它现在只是个候选，被同一件事再撞上几次才算立住。`;
+    }
+
+    case 'witness_insight': {
+      const { witnessInsight } = await import('../memory/insights.js');
+      const id = String(args.id ?? '').trim();
+      if (!id) return '（没给编号）';
+      const r = await witnessInsight(id, typeof args.source_id === 'string' ? args.source_id : undefined);
+      if (!r.ok) return '（没找到这条）';
+      return r.established
+        ? `记下这次见证（第 ${r.witnessCount} 天）。这条现在立住了。`
+        : `记下这次见证（第 ${r.witnessCount} 天）。还差 ${3 - r.witnessCount} 天不同日期的印证。`;
+    }
+
+    case 'get_insights': {
+      const { listInsights } = await import('../memory/insights.js');
+      const st = String(args.status ?? 'all');
+      const rows = await listInsights(st === 'all' ? undefined : st);
+      if (rows.length === 0) return '（还没有写过"我觉得"）';
+      return rows
+        .map(
+          (r) =>
+            `· ${r.status === 'established' ? '已立住' : '候选'}｜见证 ${r.witnessCount}/3 天｜编号 ${r.id.slice(0, 8)}\n  ${r.content}`,
+        )
+        .join('\n');
+    }
+
     case 'save_memory': {
       const { saveMemory } = await import('../memory/save.js');
       const content = pickContent(args);
@@ -559,6 +638,9 @@ function labelOf(name: string): string {
     case 'recall_timeline': return '更早的周记 / 月档';
     case 'mark_important': return '你标了重要';
     case 'resolve_memory': return '你结案了';
+    case 'write_insight': return '你写下的那句';
+    case 'witness_insight': return '你记的一次见证';
+    case 'get_insights': return '你自己想明白过的事';
     case 'get_moments': return '朋友圈';
     case 'get_sleep': return '她记的睡眠';
     case 'get_health': return '她记的身体数据';

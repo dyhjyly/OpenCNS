@@ -836,6 +836,27 @@ export function startHttpServer(): Server {
     }
   });
 
+  /* ─── 他自己想明白过的事 ─── */
+  app.get('/insights', requireToken, async (req, res) => {
+    try {
+      const { listInsights } = await import('../memory/insights.js');
+      const st = String(req.query.status ?? 'all');
+      return res.json({ ok: true, insights: await listInsights(st === 'all' ? undefined : st) });
+    } catch (err) {
+      return res.status(500).json(errFields(err));
+    }
+  });
+
+  app.post('/insights/:id/drop', requireToken, async (req, res) => {
+    try {
+      const { dropInsight } = await import('../memory/insights.js');
+      await dropInsight(String(req.params.id));
+      return res.json({ ok: true });
+    } catch (err) {
+      return res.status(500).json(errFields(err));
+    }
+  });
+
   /* ─── 合并记录（她说"合并了告诉我"）─── */
   app.get('/memory/merges', requireToken, async (req, res) => {
     try {

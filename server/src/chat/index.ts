@@ -388,10 +388,27 @@ function stripLeadingStamp(s: string): string {
 /** 共同的收尾：落库回复、派生后台任务、记日志 */
 async function finalizeTurn(
   turn: PreparedTurn,
-  reply: string,
+  rawReply: string,
   timing: { llmMs: number; firstTokenMs?: number },
   reasoning?: string,
 ): Promise<ChatResponse> {
+  /*
+   * 最后一道：把指代她的"她"改成"你"。
+   *
+   * 提示词里早就写了这条规矩，但**演示比指令强** ——
+   * 喂给他的材料（身份提示、记忆、时间树、日记、他自己以前的话）全是第三人称，
+   * 满屏"她"，他照着学。所以除了改规则，这里再兜一次底。
+   * 没出现"她"就直接过，不额外花钱。
+   */
+  let reply = rawReply;
+  try {
+    const { toSecondPerson } = await import('./second-person.js');
+    const fixed = await toSecondPerson(reply);
+    reply = fixed.text;
+  } catch {
+    /* 改写失败就用原文 */
+  }
+
   await appendMessage(turn.sessionId, 'assistant', stripLeadingStamp(reply), {
     source: 'chat',
     recalledIds: turn.recall.recalled.map((r) => r.id),

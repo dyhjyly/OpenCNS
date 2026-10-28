@@ -1255,6 +1255,18 @@ async function pageWake() {
             ${e.did ? `<div class="wake-did">${esc(e.did)}</div>` : ''}
           </div>`).join(''), true)}
 
+    ${roomSec('他想明白的事', `${(r.insights || []).length} 条`,
+      (r.insights || []).length
+        ? r.insights.map((i) => `
+          <div class="insight-item">
+            <div class="insight-when">
+              ${i.status === 'established' ? '已立住' : '候选'} · 见证 ${i.witnessCount}/3 天
+            </div>
+            <div class="insight-body">${esc(i.content)}</div>
+          </div>`).join('')
+        : '<p style="font-size:var(--fs-small);color:var(--muted);margin:0">还没有。他写下"我觉得……"会出现在这里；被同一件事再撞上三天才算立住。</p>',
+      false)}
+
     ${roomSec('手动', '叫醒', `
       <div class="row" style="border:0;padding:0">
         <span class="k">现在叫醒他一次</span>
