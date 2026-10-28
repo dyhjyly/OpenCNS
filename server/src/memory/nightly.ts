@@ -215,8 +215,19 @@ async function runEveningReview(today: string): Promise<void> {
       { endpoint: 'chat', temperature: 0.4, maxTokens: 800, label: 'nightly-review' },
     );
   } catch (err) {
-    log.warn('凌晨复盘解析失败', errFields(err));
-    return;
+    /*
+     * 兜底：它有时无视 JSON 要求，写一段散文，但里面会带编号（比如 "**50e405b9** —— …"）。
+     * 这种情况按"最要紧的一条"处理，总比整晚白跑好。
+     */
+    const raw = String((err as Error)?.message ?? '');
+    const ids = [...raw.matchAll(/\b([0-9a-f]{8})\b/g)].map((m) => m[1]!);
+    if (ids.length > 0) {
+      log.info('凌晨复盘：没给 JSON，从回答里认出了编号', { id: ids[0] });
+      parsed = { important: ids.slice(0, 1) };
+    } else {
+      log.warn('凌晨复盘解析失败', errFields(err));
+      return;
+    }
   }
 
   const important = (parsed.important ?? []).filter((x) => typeof x === 'string').slice(0, 4);

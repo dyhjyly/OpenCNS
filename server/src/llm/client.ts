@@ -45,6 +45,11 @@ export interface ChatOptions {
    * 用在"她明确让他记，但他没调 save_memory"这种必须落地的场合。
    */
   forceTool?: string;
+  /**
+   * 要求模型只输出 JSON（response_format）。
+   * 有些模型会无视提示词改写散文，这条路能把它摁住。
+   */
+  jsonMode?: boolean;
 }
 
 type ResolvedEndpoint = LlmEndpoint & { label: string; effort?: string };
@@ -106,6 +111,8 @@ async function callOnce(
   // 推理强度（low/high/max）。这是这个端点的扩展参数，不是 OpenAI 标准字段；
   // 万一换了网关不认，见下面的 400 兜底重试。
   if (ep.effort) body.effort = ep.effort;
+  // 只要 JSON：不给它写散文的机会
+  if (opts.jsonMode) body.response_format = { type: 'json_object' };
 
   let res = await fetch(`${ep.baseUrl}/chat/completions`, {
     method: 'POST',
@@ -213,7 +220,7 @@ export async function chatText(messages: ChatMessage[], opts: ChatOptions = {}):
 }
 
 export async function chatJson<T>(messages: ChatMessage[], opts: ChatOptions = {}): Promise<T> {
-  const text = await chatText(messages, opts);
+  const text = await chatText(messages, { ...opts, jsonMode: true });
   return extractJson<T>(text);
 }
 
