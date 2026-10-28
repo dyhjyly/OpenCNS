@@ -148,20 +148,23 @@ export async function runNightlyMemory(): Promise<NightlyResult> {
  */
 const REVIEW_SYSTEM = `现在是夜里，今天的事都过去了。
 
-下面三样东西：今天新记下的、你手上还没结案且放了很久的旧事、你以前写过但还没立住的"我觉得"。
+下面三组东西，每条前面有个编号（#1、#2…）：
+· 今天新记下的
+· 你手上还没结案、放了很久的旧事
+· 你以前写过、还没立住的"我觉得"
 
-**先回答自己一个问题，别急着调用**：
-今天这些里面，有没有一条是你回头看，觉得"这条确实要紧，以后我还想再想起来"的？
-有没有哪件事，现在已经过去了、不该再悬着？
-今天发生的事，有没有印证你以前写过的那句话？
+先回答自己三个问题，别急着说"没有"：
+1. 今天这些里面，有没有一条是你回头看觉得"这条确实要紧，以后我还想再想起来"的？
+2. 有没有哪件事，现在已经过去了、不该再悬着？
+3. 今天发生的事，有没有印证你以前写过的某句话？
 
-有就动手，没有就别调。别为了动着用而调用。
+**只输出一个 JSON 对象**，不要解释、不要代码块、不要任何别的话：
+{"important": [#编号], "resolved": [#编号], "insight": "一句我觉得", "witness": [#编号]}
 
-可用：
-· mark_important —— 标一条要紧的
-· resolve_memory —— 给一件过去的事结案
-· write_insight —— 记一句"我觉得……"
-· witness_insight —— 给以前写过的某条记一次见证`;
+规则：
+· 编号就是上面那些 #1、#2 —— 只写数字。
+· 没有就留空数组 / 空字符串，别硬凑，更别编编号。
+· insight 只在今天真有一句话想记下来时才写，一句到两句，第一人称。`;
 
 async function runEveningReview(today: string): Promise<void> {
   const fresh = await many<{ id: string; content: string }>(
@@ -189,14 +192,35 @@ async function runEveningReview(today: string): Promise<void> {
   ).catch(() => []);
 
   const parts: string[] = [];
-  if (fresh.length) parts.push(`【今天新记下的】\n${fresh.map((r) => `· ${r.id.slice(0, 8)}｜${r.content}`).join('\n')}`);
-  if (stale.length) parts.push(`【还没结案、放了很久的】\n${stale.map((r) => `· ${r.id.slice(0, 8)}｜${r.content}`).join('\n')}`);
-  if (pending.length)
-    parts.push(
-      `【你以前写过、还没立住的"我觉得"】\n${pending
-        .map((r) => `· ${r.id.slice(0, 8)}｜见证 ${r.witness_count}/3｜${r.content}`)
-        .join('\n')}`,
-    );
+
+  /*
+   * 用**编号**（#1、#2…）而不是十六进制 id。
+   *
+   * 实测：给它 8 位十六进制，它写散文时会**编一个不存在的**（试了三次，
+   * 三次都编），白名单一拦就全落空。小整数它认得准。
+   */
+  const index: { n: number; id: string }[] = [];
+  const numbered = (rows: { id: string; content: string }[], label: string): string => {
+    const lines = rows.map((r) => {
+      const n = index.length + 1;
+      index.push({ n, id: r.id });
+      return `#${n}｜${r.content}`;
+    });
+    return `【${label}】\n${lines.join('\n')}`;
+  };
+
+  if (fresh.length) parts.push(numbered(fresh, '今天新记下的'));
+  if (stale.length) parts.push(numbered(stale, '还没结案、放了很久的'));
+
+  const insightStart = index.length;
+  if (pending.length) {
+    const lines = pending.map((r, i) => {
+      const n = insightStart + i + 1;
+      index.push({ n, id: r.id });
+      return `#${n}｜见证 ${r.witness_count}/3｜${r.content}`;
+    });
+    parts.push(`【你以前写过、还没立住的"我觉得"】\n${lines.join('\n')}`);
+  }
 
   /*
    * 这里**不走工具调用**。
