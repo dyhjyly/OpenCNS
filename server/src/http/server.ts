@@ -857,6 +857,53 @@ export function startHttpServer(): Server {
     }
   });
 
+  /* ─── 他写的周记 / 月档 ─── */
+  app.get('/timeline/periods', requireToken, async (req, res) => {
+    try {
+      const { many } = await import('../db/pool.js');
+      const kind = String(req.query.kind ?? 'week');
+      const rows = await many<{
+        kind: string;
+        period_start: string;
+        period_end: string;
+        content: string;
+        source_through: string | null;
+      }>(
+        `select kind, period_start::text, period_end::text, content, source_through
+           from timeline_periods
+          where ($1 = 'all' or kind = $1)
+          order by period_start desc limit 24`,
+        [kind],
+      );
+      return res.json({
+        ok: true,
+        periods: rows.map((r) => ({
+          kind: r.kind,
+          start: r.period_start,
+          end: r.period_end,
+          content: r.content,
+          writtenAt: r.source_through,
+        })),
+      });
+    } catch (err) {
+      return res.status(500).json(errFields(err));
+    }
+  });
+
+  /** 现在就让他写一篇（手动触发，写完立刻刷新） */
+  app.post('/timeline/write-now', requireToken, async (_req, res) => {
+    try {
+      const { buildCurrentWeek } = await import('../memory/timeline/build.js');
+      const { invalidateTimelineCache } = await import('../memory/timeline/render.js');
+      const r = await buildCurrentWeek();
+      invalidateTimelineCache();
+      return res.json({ ok: r.built, ...r });
+    } catch (err) {
+      log.error('手动写周记失败', errFields(err));
+      return res.status(500).json(errFields(err));
+    }
+  });
+
   /* ─── 合并记录（她说"合并了告诉我"）─── */
   app.get('/memory/merges', requireToken, async (req, res) => {
     try {

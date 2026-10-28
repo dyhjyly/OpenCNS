@@ -30,6 +30,7 @@ export interface WakeRoomView {
   pats: { at: string; suffix: string | null }[];
   /** 他凌晨写下的日记（每日记忆） */
   diaries: { id: string; at: string; kind: string; content: string }[];
+  weeks: { start: string; end: string; content: string }[];
   insights: { id: string; content: string; status: string; witnessCount: number }[];
   counts: { wakes: number; decided: number; skipped: number };
 }
@@ -153,6 +154,11 @@ export async function getWakeRoom(limit = 20): Promise<WakeRoomView> {
     lockedSurprises: locked,
     pats,
     diaries: diaries.map((d) => ({ id: d.id, at: d.at, kind: d.kind, content: d.content })),
+    weeks: await many<{ start: string; end: string; content: string }>(
+      `select period_start::text as start, period_end::text as end, content
+         from timeline_periods where kind = 'week'
+        order by period_start desc limit 8`,
+    ).catch(() => []),
     insights: (await insightsRows()).map((i) => ({
       id: i.id,
       content: i.content,

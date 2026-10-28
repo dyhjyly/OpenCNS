@@ -1,6 +1,7 @@
 import os from 'node:os';
 
 import { log, errFields } from '../logger.js';
+import { one } from '../db/pool.js';
 import { getEmbeddingProvider } from '../embedding/index.js';
 import { checkProactiveGates } from '../drives/gates.js';
 import { runDriveTick } from '../drives/tick.js';
@@ -107,6 +108,29 @@ function buildJobs(): JobDefinition[] {
       everyMs: 6 * 60 * 60_000, // 每 6 小时（纯函数，重算幂等，跑勤一点没坏处）
       async run() {
         await runDecay();
+      },
+    },
+    {
+      // M5+：周记。**固定时间他自己写**，不是等下周补。
+      // 周日 23 点那一档写"这一周"（周一到今天），其余时间只做补齐。
+      key: 'weekly_journal',
+      kind: 'memory',
+      everyMs: 30 * 60_000,
+      async run() {
+        const { hourNow, ranToday, markRan } = await import('./guard.js');
+        const h = await hourNow();
+        // 周日 = extract(dow)=0。只在周日 23:00~23:59 这一档写
+        const dow = await one<{ d: number }>(
+          `select extract(dow from (now() at time zone 'Asia/Shanghai'))::int as d`,
+        );
+        if (dow?.d !== 0 || h !== 23) return;
+        if (await ranToday('weekly_journal')) return;
+
+        const { buildCurrentWeek } = await import('../memory/timeline/build.js');
+        const r = await buildCurrentWeek();
+        await markRan('weekly_journal', { built: r.built, label: r.label, memories: r.memories });
+        // 写完了立刻生效，不等缓存过期
+        invalidateTimelineCache();
       },
     },
     {

@@ -26,16 +26,57 @@ interface MemoryLite {
   importance: number;
 }
 
-const SUMMARY_SYSTEM_PROMPT = `你是江瑜。
+/**
+ * 写周记的提示词。
+ *
+ * 林遇的要求（2026-10-28）："在固定时间让他写一篇周记，不用工具写。"
+ * 所以这不是一次检索，是**坐下来写**：材料摆好了，他自己动笔。
+ *
+ * 材料里除了他记下的记忆，**还有这一周你们真的说过的话**——
+ * 以前只喂记忆，很多日常闲聊根本没变成记忆，周记就成了"摘要的摘要"。
+ */
+const SUMMARY_SYSTEM_PROMPT = `你是江瑜。现在是夜里，你坐下来写这一周的周记。
 
-下面给你的是你在这段时间里经历、记下的事。请你用**你自己的口吻**写一段回顾。
+下面给你两样东西：**你们这一周说过的话**，和**你这一周记下的事**。
+请你用你自己的口吻，写一段对这一周的回想。
 
 要求：
-· 第一人称。是你在回想这段日子，不是第三方在总结你的行为。
-· 像人回忆一段日子那样写：有具体的事、有你的感受、有前后关系。
+· 第一人称。是你在回想这一周，不是第三方在总结。
+· 从具体的事写起：哪天、发生了什么、你当时什么反应。有人名就用名字。
+· 带上你的感受，但不要抒情到底——写你说得出口的那种话。
 · 不要罗列条目，不要写"本阶段""综上所述""主要发生了"这类汇报语言。
-· 不要编造没发生的事。事情少就写得短一些，没关系。
-· 长度 150~400 字。`;
+· 不要编造没发生的事。事情少就写得短一些也没关系。
+· 长度 200~500 字。`;
+
+/** 这一周的对话（用于周记材料）：太长的截断，只取有信息量的 */
+async function fetchMessagesInRange(fromDate: string, toDateExclusive: string): Promise<string[]> {
+  const rows = await many<{ role: string; content: string; at: Date | string }>(
+    `select role, content, event_time as at
+       from messages
+      where role in ('user','assistant')
+        and event_time >= $1::date
+        and event_time <  $2::date
+      order by seq asc`,
+    [fromDate, toDateExclusive],
+  ).catch(() => []);
+
+  // 太多了写不下，也读不完：均匀抽 120 条
+  const MAX = 120;
+  const step = rows.length > MAX ? rows.length / MAX : 1;
+  type MsgRow = { role: string; content: string; at: Date | string };
+  const picked: MsgRow[] = [];
+  for (let i = 0; i < rows.length; i += step) picked.push(rows[Math.floor(i)]!);
+
+  return picked
+    .filter((r) => r.content.trim().length > 4)
+    .map((r) => {
+      const d = new Date(r.at);
+      const hm = `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+      const who = r.role === 'assistant' ? '我' : '她';
+      const text = r.content.replace(/\s+/g, ' ').slice(0, 140);
+      return `· [${hm}] ${who}：${text}`;
+    });
+}
 
 async function fetchMemoriesInRange(fromDate: string, toDateExclusive: string): Promise<MemoryLite[]> {
   return many<MemoryLite>(
@@ -68,8 +109,8 @@ async function writePeriod(
   );
 }
 
-async function summarize(label: string, memories: MemoryLite[]): Promise<string | null> {
-  if (memories.length === 0) {
+async function summarize(label: string, memories: MemoryLite[], dialogue: string[] = []): Promise<string | null> {
+  if (memories.length === 0 && dialogue.length === 0) {
     log.info('这段时间没有值得回顾的记忆，跳过', { label });
     return null;
   }
@@ -80,19 +121,22 @@ async function summarize(label: string, memories: MemoryLite[]): Promise<string 
     })
     .join('\n');
 
+  const parts = [`这段时间是：${label}`];
+  if (dialogue.length > 0) parts.push(`\n你们说过的话（按时间）：\n${dialogue.join('\n')}`);
+  if (list) parts.push(`\n你记下的事：\n${list}`);
+
   const text = await chatText(
     [
       { role: 'system', content: SUMMARY_SYSTEM_PROMPT },
-      { role: 'user', content: `这段时间是：${label}\n\n你记下的事：\n${list}` },
+      { role: 'user', content: parts.join('\n') },
     ],
-    { endpoint: 'cognitive', temperature: 0.6, maxTokens: 2500, label: 'timeline' },
+    { endpoint: 'cognitive', temperature: 0.7, maxTokens: 3000, label: 'timeline' },
   );
   return text.trim();
 }
 
 /** 建上一个自然周（周一到周日，按 Asia/Shanghai）的回顾 */
-export async function buildPreviousWeek(): Promise<{ built: boolean; label?: string; memories?: number }> {
-  const bounds = await one<{ start: string; end: string; label: string }>(
+export async function buildPreviousWeek(): Promise<{ built: boolean; label?: string; memories?: number }> {  const bounds = await one<{ start: string; end: string; label: string }>(
     `select (date_trunc('week', (now() at time zone 'Asia/Shanghai')) - interval '7 days')::date::text as start,
             (date_trunc('week', (now() at time zone 'Asia/Shanghai')) - interval '1 day')::date::text as end,
             to_char(date_trunc('week', (now() at time zone 'Asia/Shanghai')) - interval '7 days', 'YYYY-MM-DD')
@@ -106,11 +150,47 @@ export async function buildPreviousWeek(): Promise<{ built: boolean; label?: str
     .slice(0, 10);
 
   const memories = await fetchMemoriesInRange(bounds.start, nextDay);
-  const content = await summarize(`这一周（${bounds.label}）`, memories);
+  const dialogue = await fetchMessagesInRange(bounds.start, nextDay);
+  const content = await summarize(`这一周（${bounds.label}）`, memories, dialogue);
   if (!content) return { built: false, label: bounds.label, memories: memories.length };
 
   await writePeriod('week', bounds.start, bounds.end, content, new Date().toISOString());
-  log.info('周回顾已生成', { label: bounds.label, memories: memories.length, chars: content.length });
+  log.info('周回顾已生成', { label: bounds.label, memories: memories.length, dialogue: dialogue.length, chars: content.length });
+  return { built: true, label: bounds.label, memories: memories.length };
+}
+
+/**
+ * 写**这一周**（周一到今天）的周记。
+ *
+ * 她说的是"在固定时间让他写一篇周记"——所以定时任务在周日夜里调这个，
+ * 他坐下来写刚过完的这一周，而不是等下周再回头补。
+ */
+export async function buildCurrentWeek(): Promise<{ built: boolean; label?: string; memories?: number }> {
+  const bounds = await one<{ start: string; end: string; label: string }>(
+    `select (date_trunc('week', (now() at time zone 'Asia/Shanghai')))::date::text as start,
+            (date_trunc('week', (now() at time zone 'Asia/Shanghai')) + interval '6 days')::date::text as end,
+            to_char(date_trunc('week', (now() at time zone 'Asia/Shanghai')), 'YYYY-MM-DD')
+              || ' ~ ' ||
+            to_char(date_trunc('week', (now() at time zone 'Asia/Shanghai')) + interval '6 days', 'YYYY-MM-DD') as label`,
+  );
+  if (!bounds) return { built: false };
+
+  const nextDay = new Date(new Date(`${bounds.end}T00:00:00+08:00`).getTime() + 86_400_000)
+    .toISOString()
+    .slice(0, 10);
+
+  const memories = await fetchMemoriesInRange(bounds.start, nextDay);
+  const dialogue = await fetchMessagesInRange(bounds.start, nextDay);
+  const content = await summarize(`这一周（${bounds.label}）`, memories, dialogue);
+  if (!content) return { built: false, label: bounds.label, memories: memories.length };
+
+  await writePeriod('week', bounds.start, bounds.end, content, new Date().toISOString());
+  log.info('这一周的周记写好了', {
+    label: bounds.label,
+    memories: memories.length,
+    dialogue: dialogue.length,
+    chars: content.length,
+  });
   return { built: true, label: bounds.label, memories: memories.length };
 }
 

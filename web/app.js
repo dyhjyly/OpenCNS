@@ -1255,6 +1255,16 @@ async function pageWake() {
             ${e.did ? `<div class="wake-did">${esc(e.did)}</div>` : ''}
           </div>`).join(''), true)}
 
+    ${roomSec('他写的周记', `${(r.weeks || []).length} 篇`,
+      (r.weeks || []).length
+        ? r.weeks.map((w) => `
+          <div class="diary-item">
+            <div class="diary-when">${esc(w.start)} ~ ${esc(w.end)}</div>
+            <div class="diary-body">${esc(w.content)}</div>
+          </div>`).join('')
+        : '<p style="font-size:var(--fs-small);color:var(--muted);margin:0">还没有。周日夜里他会坐下来写这一周。</p>',
+      true)}
+
     ${roomSec('他想明白的事', `${(r.insights || []).length} 条`,
       (r.insights || []).length
         ? r.insights.map((i) => `
