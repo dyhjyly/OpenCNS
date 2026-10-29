@@ -60,7 +60,7 @@ export async function inspectMetronome(): Promise<MetronomeState> {
     reason = '还没有任何对话记录，可以开第一个机会窗';
   } else if (sinceAnchorMs < WAKE_INTERVAL_MS) {
     const leftMin = Math.round((WAKE_INTERVAL_MS - sinceAnchorMs) / 60_000);
-    reason = `还没到 2 小时，还差约 ${Math.round(leftMin / 60)} 小时`;
+    reason = leftMin < 60 ? `还没到 2 小时，还差约 ${leftMin} 分钟` : `还没到 2 小时，还差约 ${(leftMin / 60).toFixed(1)} 小时`;
   } else {
     due = true;
     reason = '机会窗到了';
