@@ -2,6 +2,7 @@ import { many, query } from '../../db/pool.js';
 import { getEmbeddingProvider } from '../../embedding/index.js';
 import { chatJson } from '../../llm/client.js';
 import { log, errFields } from '../../logger.js';
+import { getSetting } from '../../settings/index.js';
 import {
   buildJudgeUserMessage,
   RECALL_JUDGE_SYSTEM_PROMPT,
@@ -479,42 +480,49 @@ export async function recall(userMessage: string, opts: { limit?: number } = {})
   }
 
   /*
-   * 候选很少时不必花几秒去裁决 —— 没得挑。
+   * 要不要花那笔钱裁决？
    *
-   * 2026-10-29：从"只有 1 条"放宽到"≤3 条"（林遇定的）。
-   * 裁决是 cognitive 那一档里最贵的一笔（思考模式会吐一大段理由），
-   * 而候选不超过 3 条时它几乎总会全给 —— 这笔钱不值。
-   * 留一道门槛：分数太低的不要，免得没人竞争就把无关的塞进去。
+   * 林遇的算法（2026-10-29）："召回最多 3 条给他就好"，那就不必再花一次
+   * cognitive 调用让模型再挑一遍 —— 裁决是思考模式，光理由就能吐上千字。
+   *
+   * 开关：settings 里的 recall.judge
+   *   never （默认）拿分数前 3 条就走，不调模型
+   *   auto          候选 ≤3 条才跳过
+   *   always        每次都裁决（质量最好，最贵）
    */
-  const SKIP_JUDGE_MAX = 3;
+  const judgeMode = String(getSetting('recall.judge', 'never'));
   const MIN_SCORE_NO_JUDGE = 0.3;
 
-  if (top.length > 0 && top.length <= SKIP_JUDGE_MAX) {
-    const strong = top.filter(
+  const takeByScore = (rows: RecallCandidate[]) => {
+    const strong = rows.filter(
       (c) => (c.similarity ?? 0) >= 0.55 || c.importance >= 0.75 || c.score >= MIN_SCORE_NO_JUDGE,
     );
-    if (strong.length === 0) {
-      log.info('候选太少且都不够强，不递', { n: top.length });
+    return strong.slice(0, MAX_RECALLED);
+  };
+
+  if (judgeMode === 'never' || (judgeMode === 'auto' && top.length <= 3)) {
+    const picked = takeByScore(top);
+    if (picked.length === 0) {
       return {
         ...empty,
         byRoute,
         droppedByCooldown,
         emotionRouteAllowed: explicit,
-        judgeReason: '候选太少且不够强',
+        judgeReason: '候选都不够强',
       };
     }
-    for (const c of strong) {
+    for (const c of picked) {
       await query(`select touch_exposure($1, 1.5)`, [c.id]).catch(() => undefined);
     }
-    log.info('候选很少，跳过裁决', { n: top.length, 取: strong.length });
+    log.info('按分数直接给，没调裁决', { n: top.length, 取: picked.length, mode: judgeMode });
     return {
-      recalled: strong,
+      recalled: picked,
       candidates: top.length,
       byRoute,
       droppedByCooldown,
       emotionRouteAllowed: explicit,
       judgeUsed: false,
-      judgeReason: `候选 ${top.length} 条，直接给（省一次裁决）`,
+      judgeReason: `${judgeMode === 'never' ? '压成本：' : ''}按分数取前 ${picked.length} 条`,
     };
   }
 
