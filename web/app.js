@@ -67,6 +67,15 @@ async function api(path, opts = {}) {
   return res.json();
 }
 
+/** 首页那行小字：日期 + 时间（原来写死的是罗马数字年份 MMXXVI，不走） */
+function nowLine() {
+  const d = new Date();
+  const wd = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][d.getDay()];
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return `${d.getFullYear()} · ${d.getMonth() + 1} · ${d.getDate()}　${wd}　${hh}:${mm}`;
+}
+
 function romanYear(y) {
   const map = { M: 1000, D: 500, C: 100, L: 50, X: 10, V: 5, I: 1 };
   let n = y, out = '';
@@ -246,7 +255,7 @@ async function pageHome(fresh = false) {
       <span class="caps">Together Since</span>
       <div class="big">${t.days}<small>days</small></div>
       <div class="bless">每一天都有你。</div>
-      <div class="roman">· ${romanYear(2026)} ·</div>
+      <div class="roman" id="homeClock">· ${nowLine()} ·</div>
     </section>
 
     <section class="card ornate">
@@ -732,6 +741,38 @@ async function pageSettings() {
     </section>
 
     <section class="card ornate">
+      <div class="card-title">他的提示词<span class="caps">看得到，也改得了</span></div>
+      <p class="mind-note" style="margin:0 0 10px">
+        上面那两块是系统拼出来的，别直接改；想加规矩就写在下面的「额外交代」里，
+        它会接在身份提示词的**最后**（越靠后，权重越高）。
+      </p>
+
+      <div class="row" style="border:0;padding:0 0 10px">
+        <span class="k">看现在真正发给他的</span>
+        <button class="mini" id="readPrompt">读取</button>
+      </div>
+
+      <div id="promptView" hidden>
+        <details class="mrv-fmt" open>
+          <summary>身份部分（每轮都带）</summary>
+          <pre id="promptIdentity" class="prompt-pre"></pre>
+        </details>
+        <details class="mrv-fmt">
+          <summary>这一轮的背景（时间 / 时间树 / 门铃 / 状态）</summary>
+          <pre id="promptContext" class="prompt-pre"></pre>
+        </details>
+      </div>
+
+      <label class="prompt-label">额外交代（接在身份提示词最后）</label>
+      <textarea id="promptExtra" class="mrv-content" rows="6"
+        placeholder="比如：跟她说话永远说"你"，不说"她"。"></textarea>
+      <div class="row" style="border:0;padding:10px 0 0">
+        <span class="k" id="promptExtraHint">改完点保存，下一轮生效</span>
+        <button class="mini" id="savePromptExtra">保存</button>
+      </div>
+    </section>
+
+    <section class="card ornate">
       <div class="card-title">外部工具（MCP）<span class="caps">你连了他才能用</span></div>
       <div id="mcpList" class="mcp-list"><div class="empty">读取中…</div></div>
 
@@ -884,6 +925,47 @@ async function pageSettings() {
     }
   };
   void renderHisTools();
+
+  /* ── 他的提示词（看 + 加额外交代） ── */
+  const readPromptBtn = $('#readPrompt');
+  if (readPromptBtn) {
+    readPromptBtn.addEventListener('click', async () => {
+      readPromptBtn.disabled = true;
+      readPromptBtn.textContent = '读取中…';
+      try {
+        const r = await api(`/admin/prompt?q=${encodeURIComponent('在吗')}`);
+        $('#promptView').hidden = false;
+        $('#promptIdentity').textContent = r.identity || '';
+        $('#promptContext').textContent = r.context || '';
+        $('#promptExtra').value = r.extra || '';
+      } catch (err) {
+        toast('读不到：' + err.message, 2400);
+      }
+      readPromptBtn.disabled = false;
+      readPromptBtn.textContent = '重新读取';
+    });
+  }
+
+  const saveExtra = $('#savePromptExtra');
+  if (saveExtra) {
+    // 顺手先把已有的额外交代读出来（只读设置，不跑召回）
+    if (!($('#promptExtra').value || '').trim()) {
+      api('/admin/prompt?skin=1')
+        .then((r) => {
+          if (!$('#promptExtra').value) $('#promptExtra').value = r.extra || '';
+        })
+        .catch(() => {});
+    }
+    saveExtra.addEventListener('click', async () => {
+      const text = $('#promptExtra').value;
+      try {
+        const r = await api('/admin/prompt/extra', { method: 'POST', body: JSON.stringify({ text }) });
+        toast(`存好了（${r.length} 字），下一轮生效`, 2200);
+      } catch (err) {
+        toast('保存失败：' + err.message, 2400);
+      }
+    });
+  }
 
   /* ── MCP ── */
   const renderMcp = async () => {
@@ -2974,6 +3056,12 @@ async function promptInstall() {
   applyTheme(store.theme);
   tickSplashClock();
   setInterval(tickSplashClock, 30000);
+
+  // 首页那行日期时间要跟着走（原来写死的是罗马数字年份）
+  setInterval(() => {
+    const el = document.getElementById('homeClock');
+    if (el) el.textContent = `· ${nowLine()} ·`;
+  }, 30000);
 
   // 键盘弹起时把可视高度写进 CSS 变量（老浏览器没有 interactive-widget 时兜底）
   const vv = window.visualViewport;

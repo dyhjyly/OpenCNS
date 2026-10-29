@@ -924,6 +924,19 @@ body.mom-manage .mom-item { padding-top: 26px }
   font-family: var(--f-body-en); font-size: 13px; outline: none;
 }
 
+/* 提示词查看/编辑 */
+.prompt-pre {
+  margin: 10px 0 0; padding: 10px 12px; border-radius: 10px;
+  background: color-mix(in srgb, var(--bg2) 80%, transparent);
+  font-family: var(--f-body); font-size: 12px; line-height: 1.75;
+  max-height: 46vh; overflow-y: auto; white-space: pre-wrap;
+  color: var(--text);
+}
+.prompt-label {
+  display: block; margin: 14px 0 6px;
+  font-family: var(--f-title); font-weight: 700; font-size: 11.5px; color: var(--muted);
+}
+
 /* 他想明白的事 */
 .insight-item { margin-bottom: 12px }
 .insight-when {

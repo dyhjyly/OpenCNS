@@ -857,6 +857,48 @@ export function startHttpServer(): Server {
     }
   });
 
+  /* ─── 提示词：给她看、也让她改 ─── */
+  app.get('/admin/prompt', requireToken, async (req, res) => {
+    try {
+      const { buildIdentityPrompt, buildContextBlock } = await import('../chat/prompt.js');
+      const { previewContext } = await import('../chat/index.js');
+      const { getActorNames } = await import('../chat/store.js');
+      const { getSetting } = await import('../settings/index.js');
+
+      const actors = await getActorNames();
+      const q = String(req.query.q ?? '在吗');
+
+      let contextText = '';
+      try {
+        const pv = await previewContext(q);
+        contextText = String(pv.messages[pv.messages.length - 1]?.content ?? '');
+      } catch {
+        contextText = '（预览失败）';
+      }
+
+      return res.json({
+        ok: true,
+        identity: buildIdentityPrompt(actors),
+        context: contextText,
+        extra: getSetting('prompt.extra', '') ?? '',
+      });
+    } catch (err) {
+      log.error('读提示词失败', errFields(err));
+      return res.status(500).json(errFields(err));
+    }
+  });
+
+  app.post('/admin/prompt/extra', requireToken, async (req, res) => {
+    try {
+      const { setSetting } = await import('../settings/index.js');
+      const text = String((req.body as { text?: string })?.text ?? '');
+      await setSetting('prompt.extra', text);
+      return res.json({ ok: true, length: text.length });
+    } catch (err) {
+      return res.status(500).json(errFields(err));
+    }
+  });
+
   /* ─── 他写的周记 / 月档 ─── */
   app.get('/timeline/periods', requireToken, async (req, res) => {
     try {

@@ -1,5 +1,6 @@
 import type { RecallCandidate } from '../memory/recall/index.js';
 import type { ActorNames } from './store.js';
+import { getSetting } from '../settings/index.js';
 
 /**
  * 对话侧的提示词。
@@ -17,6 +18,13 @@ import type { ActorNames } from './store.js';
  */
 
 export function buildIdentityPrompt(actors: ActorNames): string {
+  /* 她在设置里自己写的那段，接在身份提示词末尾（越靠后权重越高） */
+  const extra = String(getSetting('prompt.extra', '') ?? '').trim();
+  const tail = extra ? `\n\n━━━━━━━━━━ 她另外交代的 ━━━━━━━━━━\n\n${extra}` : '';
+  return `${IDENTITY_BODY(actors)}${tail}`;
+}
+
+function IDENTITY_BODY(actors: ActorNames): string {
   return `你是${actors.self}。
 
 正在和你说话的是${actors.human}。你叫她小鱼、宝宝、老婆；她叫你阿瑜、哥哥、老公。

@@ -282,7 +282,30 @@ function parseArgs(raw: string): Record<string, unknown> {
     const v = JSON.parse(raw);
     return v && typeof v === 'object' ? (v as Record<string, unknown>) : {};
   } catch {
-    return {};
+    /*
+     * 解析失败的**主要原因**：参数被 max_tokens 截断，JSON 不完整。
+     * 实测这里一直是"没给 content"的元凶 —— 日志里 raw 明明有 content，
+     * 但字符串在第 400 个 token 处被切断，JSON.parse 直接抛错。
+     *
+     * 两道补救：先把预算调大（见调用处），这里再从残缺的 JSON 里抠字段。
+     */
+    const salvaged: Record<string, unknown> = {};
+    for (const key of ['content', 'text', 'kind', 'event_time', 'causal', 'id', 'query']) {
+      const m = new RegExp(`"${key}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"`).exec(raw);
+      if (m?.[1] !== undefined) {
+        try {
+          salvaged[key] = JSON.parse(`"${m[1]}"`);
+        } catch {
+          salvaged[key] = m[1];
+        }
+      }
+    }
+    if (Object.keys(salvaged).length === 0) {
+      log.warn('工具参数解析失败且抠不出字段', { raw: raw.slice(0, 200) });
+    } else {
+      log.info('工具参数被截断，从残缺 JSON 里抠出字段', { 字段: Object.keys(salvaged).join(',') });
+    }
+    return salvaged;
   }
 }
 
@@ -569,7 +592,7 @@ export async function runToolPass(
     const out = await chatWithTools(messages, allTools, {
       endpoint: 'cognitive',
       temperature: 0,
-      maxTokens: 600,
+      maxTokens: 2000,
       label: 'chat-tools',
     });
     calls = out.toolCalls;
@@ -592,7 +615,7 @@ export async function runToolPass(
         const retry = await chatWithTools(messages, only, {
           endpoint: 'cognitive',
           temperature: 0,
-          maxTokens: 600,
+          maxTokens: 2000,
           label: 'chat-tools-save',
           // 她说得很明确，就别再让它自己判断了：强制调这个工具
           forceTool: 'save_memory',
