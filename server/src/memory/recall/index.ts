@@ -52,8 +52,9 @@ export interface RecallResult {
 
 // 裁决要读候选，候选越多它越慢（实测 24 条时裁决单独就要 4~6 秒）。
 // 候选本来就按分数排好序，取前 12 条足够判断，也让它更专注。
-const MAX_CANDIDATES = 12;
-const MAX_RECALLED = 5;
+const MAX_CANDIDATES = 8;
+const MAX_RECALLED = 3;
+  // 她说最多 3 条就够了，多了反而稀释
 
 /** 明确想回忆的语气 —— 情绪路与"多给几条"都靠它放行 */
 const EXPLICIT_RECALL = [

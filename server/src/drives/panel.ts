@@ -109,8 +109,15 @@ export async function getMindPanel(): Promise<MindPanel> {
     ? Math.max(0, Math.round((Date.now() - new Date(lastWake.created_at).getTime()) / 60_000))
     : null;
 
-  // 情绪底色：来自她和他最近留下的记忆里的情感值（真实数据，不是编的）
-  // 注意列名是 emotion_valence / emotion_arousal
+  /*
+   * 情绪底色。
+   *
+   * 原来这里取 memory_items 的 emotion_valence / emotion_arousal —— 但那两列
+   * 是压缩管线写的，管线关了之后**一直是空**，所以"愉悦度/唤醒度"永远 null。
+   *
+   * 现在：有真实标注就用标注；没有就从欲望系统推（每个数都能倒推回哪一个欲望，
+   * 符合这个面板的规矩）。来源字段也跟着说清楚。
+   */
   const emo = await one<{ valence: number | null; arousal: number | null; n: number }>(
     `select avg(emotion_valence)::float as valence,
             avg(emotion_arousal)::float as arousal,
@@ -121,8 +128,27 @@ export async function getMindPanel(): Promise<MindPanel> {
         and emotion_valence is not null`,
   ).catch(() => null);
 
+  const dv = (k: string) => byKey.get(k)?.value ?? 0;
+  // 愉悦：亲密、期待往上拉；烦躁、累往下压
+  const derivedPleasure = Math.max(
+    0,
+    Math.min(1, 0.35 + 0.5 * dv('intimacy') + 0.3 * dv('anticipation') - 0.45 * dv('irritation') - 0.3 * dv('fatigue')),
+  );
+  // 唤醒：想说、想动、惦记、烦，都让人醒着
+  const derivedArousal = Math.max(
+    0,
+    Math.min(1, 0.2 + 0.45 * dv('urge_to_speak') + 0.3 * dv('urge_to_make') + 0.3 * dv('missing') + 0.35 * dv('irritation')),
+  );
+
   const to100 = (v: number | null | undefined, lo: number, hi: number) =>
     v === null || v === undefined ? null : Math.round(((v - lo) / (hi - lo)) * 100);
+
+  const hasReal = (emo?.n ?? 0) > 0;
+  const pleasure = hasReal ? to100(emo?.valence ?? null, -1, 1) : Math.round(derivedPleasure * 100);
+  const arousal = hasReal ? to100(emo?.arousal ?? null, 0, 1) : Math.round(derivedArousal * 100);
+  const moodSource = hasReal
+    ? `近 7 天 ${emo!.n} 条记忆的情感标注`
+    : '从欲望换算（亲密/期待/想说/想动 减去 烦躁/累）；记忆里还没有情感标注';
 
   const initiative =
     byKey.has('urge_to_speak') || byKey.has('urge_to_make')
@@ -171,10 +197,10 @@ export async function getMindPanel(): Promise<MindPanel> {
     lastWakeDecision: lastWake?.decision ?? null,
     radar,
     mood: {
-      pleasure: to100(emo?.valence ?? null, -1, 1),
-      arousal: to100(emo?.arousal ?? null, 0, 1),
+      pleasure,
+      arousal,
       initiative,
-      source: emo?.n ? `近 7 天 ${emo.n} 条记忆的情感值` : '还没有足够的情感记录',
+      source: moodSource,
     },
     truth,
     wishes,

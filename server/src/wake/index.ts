@@ -2,9 +2,8 @@ import { log } from '../logger.js';
 import { listDrives } from '../drives/state.js';
 import { bandOf, DRIVE_BY_KEY } from '../drives/definitions.js';
 import { checkProactiveGates } from '../drives/gates.js';
-import { decideAndAct, type WakeOutcome, type WakeSignals } from './decide.js';
+import type { WakeOutcome, WakeSignals } from './decide.js';
 import { inspectMetronome, recordWake, type MetronomeState } from './metronome.js';
-import { buildRoomPack, saveRoomPack } from './room.js';
 
 /**
  * 唤醒回路。
@@ -86,28 +85,44 @@ export async function runWakeCycle(opts: { force?: boolean } = {}): Promise<Wake
   }
 
   const gate = await checkProactiveGates();
-  const pack = await buildRoomPack();
-  const outcome = await decideAndAct({ pack, signals, gate, actorName: '' });
+
+  /*
+   * 醒来 = 一次不用她开口的对话。
+   *
+   * 以前是"拼一个醒来房间再让他六选一"——那等于把他放进一个只看得到素材、
+   * 看不到你们刚说过什么的小房间，他自然认不出自己说过的话。
+   * 现在走和聊天完全相同的上下文（身份提示词 + 7 天对话），
+   * 只把最后一句换成"她这会儿没说话"。
+   */
+  const { runWakeTurn } = await import('./turn.js');
+  const turn = await runWakeTurn(signals);
+
+  const outcome: WakeOutcome = {
+    decision: turn.decision === 'post' ? 'social' : turn.decision,
+    actions: turn.actions,
+    reason: turn.decision === 'stay_quiet' ? '他自己决定继续安静' : '他自己开口了',
+    message: turn.message ?? undefined,
+    momentIds: turn.momentId ? [turn.momentId] : [],
+    patted: false,
+    commented: 0,
+    modelCalls: turn.modelCalls,
+    gateBlocked: gate.allowed ? [] : gate.blockedBy,
+    outboxQueued: false,
+    satisfaction: [],
+  };
 
   const wakeLogId = await recordWake({
     decision: outcome.decision,
     actions: outcome.actions,
     signals,
     modelCalls: outcome.modelCalls,
-    driveSnapshot: { detail: signals.detail, driveHints: [] },
+    driveSnapshot: {
+      detail: signals.detail,
+      driveHints: [],
+      gate: gate.allowed ? 'open' : `blocked:${gate.blockedBy.join(',')}`,
+    },
     forced: opts.force ?? false,
   });
-  await saveRoomPack(wakeLogId, pack, pack.rendered);
-
-  // 把这次醒来和它写下的经历绑起来，醒来房间才解释得清"这一条是谁留下的"
-  if (outcome.experienceId) {
-    const { query } = await import('../db/pool.js');
-    await query(
-      `update memory_items set provenance = provenance || jsonb_build_object('wake_id', $2::int)
-        where id = $1`,
-      [outcome.experienceId, wakeLogId],
-    ).catch(() => undefined);
-  }
 
   return { skipped: false, metronome, signals, outcome, wakeLogId };
 }
