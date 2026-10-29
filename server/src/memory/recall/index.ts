@@ -478,31 +478,43 @@ export async function recall(userMessage: string, opts: { limit?: number } = {})
     return { ...empty, byRoute, droppedByCooldown, emotionRouteAllowed: explicit };
   }
 
-  // 只有一条候选时不必花几秒去裁决——没得选。
-  // 但要确认它足够像，不能因为只有一条就把无关的塞进去。
-  if (top.length === 1) {
-    const only = top[0]!;
-    const strong = (only.similarity ?? 0) >= 0.55 || only.importance >= 0.75;
-    if (!strong) {
-      log.info('只有一条候选且不够强，不递', { score: only.score, similarity: only.similarity });
-      return { ...empty, byRoute, droppedByCooldown, emotionRouteAllowed: explicit, judgeReason: '唯一候选不够强' };
+  /*
+   * 候选很少时不必花几秒去裁决 —— 没得挑。
+   *
+   * 2026-10-29：从"只有 1 条"放宽到"≤3 条"（林遇定的）。
+   * 裁决是 cognitive 那一档里最贵的一笔（思考模式会吐一大段理由），
+   * 而候选不超过 3 条时它几乎总会全给 —— 这笔钱不值。
+   * 留一道门槛：分数太低的不要，免得没人竞争就把无关的塞进去。
+   */
+  const SKIP_JUDGE_MAX = 3;
+  const MIN_SCORE_NO_JUDGE = 0.3;
+
+  if (top.length > 0 && top.length <= SKIP_JUDGE_MAX) {
+    const strong = top.filter(
+      (c) => (c.similarity ?? 0) >= 0.55 || c.importance >= 0.75 || c.score >= MIN_SCORE_NO_JUDGE,
+    );
+    if (strong.length === 0) {
+      log.info('候选太少且都不够强，不递', { n: top.length });
+      return {
+        ...empty,
+        byRoute,
+        droppedByCooldown,
+        emotionRouteAllowed: explicit,
+        judgeReason: '候选太少且不够强',
+      };
     }
-    /*
-     * 只记曝光、不强化。
-     *
-     * 参照 Ombre-Brain：检索是"我去找它"，强化是"找到之后这条确实要紧"，
-     * 两件事必须分开 —— 他们踩过坑，把两者绑在一起之后，
-     * 被频繁查询的旧桶权重积到 51，新桶再也排不进浮现区。
-     */
-    await query(`select touch_exposure($1, 1.5)`, [only.id]).catch(() => undefined);
+    for (const c of strong) {
+      await query(`select touch_exposure($1, 1.5)`, [c.id]).catch(() => undefined);
+    }
+    log.info('候选很少，跳过裁决', { n: top.length, 取: strong.length });
     return {
-      recalled: [only],
-      candidates: 1,
+      recalled: strong,
+      candidates: top.length,
       byRoute,
       droppedByCooldown,
       emotionRouteAllowed: explicit,
       judgeUsed: false,
-      judgeReason: '唯一候选且足够强，跳过裁决',
+      judgeReason: `候选 ${top.length} 条，直接给（省一次裁决）`,
     };
   }
 

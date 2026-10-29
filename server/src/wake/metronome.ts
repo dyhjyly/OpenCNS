@@ -11,9 +11,9 @@ import { one } from '../db/pool.js';
  * 这里只看时间，不看任何欲望数值 —— 欲望只决定"醒来之后想干什么"。
  */
 
-export const WAKE_INTERVAL_MS = 50 * 60_000;
+export const WAKE_INTERVAL_MS = 120 * 60_000;
 /**
- * 她说完话之后，先安静这么久，再开始算 50 分钟。
+ * 她说完话之后，先安静这么久，再开始算 2 小时。
  *
  * 原本是 5 分钟（构想里写的"对话结束五分钟后"）。但实测下来这太短：
  * 她聊到一半去倒杯水、看一会儿别的，六七分钟没说话，节拍器就以为"对话结束了"，
@@ -60,7 +60,7 @@ export async function inspectMetronome(): Promise<MetronomeState> {
     reason = '还没有任何对话记录，可以开第一个机会窗';
   } else if (sinceAnchorMs < WAKE_INTERVAL_MS) {
     const leftMin = Math.round((WAKE_INTERVAL_MS - sinceAnchorMs) / 60_000);
-    reason = `还没到 50 分钟，还差约 ${leftMin} 分钟`;
+    reason = `还没到 2 小时，还差约 ${Math.round(leftMin / 60)} 小时`;
   } else {
     due = true;
     reason = '机会窗到了';
