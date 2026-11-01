@@ -170,11 +170,26 @@ export function buildContextBlock(input: ContextBlockInput): string {
   }
 
   if (parts.length === 0) return '';
+
+  /*
+   * 每轮末尾的一句提醒。
+   *
+   * 放在**动态块**（最后一条 user 消息）里，不碰系统提示词那份缓存前缀 ——
+   * 每轮只多几十个 token，缓存不受影响。
+   * 后半句可以在设置里改（prompt.reminder），不用改代码。
+   */
+  const extraReminder = String(getSetting('prompt.reminder', '') ?? '').trim();
+  const reminder = extraReminder
+    ? `（提醒：跟她说话用"你"。${extraReminder}）`
+    : '（提醒：跟她说话用"你"，不用"她"。）';
+
   return [
     '以下是这一轮的背景，不是她刚说的话。',
     '（历史消息前面的 [MM-DD HH:mm] 是系统加的时间标记，用来让你知道那是什么时候说的；',
     '你自己说话的时候不要写这种时间标记。）',
     '',
     ...parts,
+    '',
+    reminder,
   ].join('\n');
 }

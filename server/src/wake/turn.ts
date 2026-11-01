@@ -154,6 +154,20 @@ export async function runWakeTurn(signals: WakeSignals): Promise<WakeTurnOutcome
         decision: 'reach_out',
       });
     }
+    /*
+     * 还要进 outbox，否则**手机上收不到推送**。
+     *
+     * 踩过的坑：重写唤醒之后只写了 messages 表，忘了排队推送 ——
+     * 聊天页能看到他说话了，但 pushplus 一条都没发出去，
+     * 看起来就像"推送坏了"（实际是根本没排队）。
+     */
+    try {
+      const { enqueue } = await import('../push/index.js');
+      await enqueue({ kind: 'message', content: text, dedupeKey: `wake-${Date.now()}` });
+    } catch (err) {
+      log.warn('排队推送失败（消息本身已存）', { error: (err as Error).message });
+    }
+
     outcome.decision = 'reach_out';
     outcome.actions = ['reach_out'];
     outcome.message = text;

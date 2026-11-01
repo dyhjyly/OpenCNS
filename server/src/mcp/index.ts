@@ -241,7 +241,31 @@ export async function callTool(
   if (!row) return '（MCP 服务器不在了）';
   const s = mapRow(row);
 
-  const out = await rpc(s.url, s.headers, 'tools/call', { name: toolName, arguments: args }, s.sessionId);
+  let out = await rpc(s.url, s.headers, 'tools/call', { name: toolName, arguments: args }, s.sessionId);
+
+  /*
+   * 会话失效就自己重连一次。
+   *
+   * 她的原话："每调用一次都需要再手动重新连接"。
+   * 原因是 MCP 的会话是有寿命的：服务器那边过期之后，再调就报
+   * 404 / "session not found"，状态却还留着"已连接"。
+   * 这里当场重新 initialize + tools/list，然后重试一次，不用她去点。
+   */
+  if (out.error && /session|404|not found|expired|invalid/i.test(String(out.error.message ?? ''))) {
+    log.info('MCP 会话失效，自动重连', { server: s.name });
+    const again = await connect(id).catch(() => ({ ok: false }));
+    if (again.ok) {
+      const fresh = mapRow(
+        (await one<Parameters<typeof mapRow>[0]>(
+          `select id::text, name, url, headers, enabled, status, tools, error, session_id, connected_at, created_at
+             from mcp_servers where id = $1::uuid`,
+          [id],
+        ))!,
+      );
+      out = await rpc(fresh.url, fresh.headers, 'tools/call', { name: toolName, arguments: args }, fresh.sessionId);
+    }
+  }
+
   if (out.error) {
     log.warn('MCP 工具调用失败', { server: s.name, tool: toolName, error: out.error.message });
     return `（调用 ${toolName} 失败：${String(out.error.message ?? '').slice(0, 200)}）`;

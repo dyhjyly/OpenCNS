@@ -537,6 +537,38 @@ async function pageChat() {
     form.requestSubmit();
   });
 
+  /*
+   * 草稿：输入框里的内容要留住。
+   *
+   * 她的原话："在文本框输入了内容但没发送时，不会清掉内容，一直保存在输入框中"。
+   * 页面切换、切到后台、甚至刷新，回来都还在。
+   */
+  const DRAFT_KEY = 'chat.draft';
+  const saveDraft = () => {
+    try {
+      localStorage.setItem(DRAFT_KEY, input.value);
+    } catch {
+      /* 存不下就算了 */
+    }
+  };
+  const draft = (() => {
+    try {
+      return localStorage.getItem(DRAFT_KEY) || '';
+    } catch {
+      return '';
+    }
+  })();
+  if (draft) {
+    input.value = draft;
+    input.style.height = 'auto';
+    input.style.height = `${Math.min(input.scrollHeight, 160)}px`;
+  }
+  input.addEventListener('input', saveDraft);
+  window.addEventListener('pagehide', saveDraft);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') saveDraft();
+  });
+
   $('#attachBtn').addEventListener('click', () => fileInput.click());
   fileInput.addEventListener('change', async () => {
     const files = Array.from(fileInput.files || []);
@@ -545,7 +577,8 @@ async function pageChat() {
     toast(`正在上传 ${files.length} 个…`, 1200);
     for (const raw of files) {
       try {
-        const f = await shrinkImage(raw);
+        // 只有图片才压；其它文件原样传，不要试图当图片处理
+        const f = raw.type.startsWith('image/') ? await shrinkImage(raw) : raw;
         const base64 = await fileToBase64(f);
         const up = await api('/upload', {
           method: 'POST',
@@ -571,6 +604,11 @@ async function pageChat() {
 
     input.value = '';
     input.style.height = 'auto';
+    try {
+      localStorage.removeItem('chat.draft'); // 发出去了，草稿作废
+    } catch {
+      /* 忽略 */
+    }
     pendingFiles = [];
     renderAttachStrip();
     chatBusy = true;
