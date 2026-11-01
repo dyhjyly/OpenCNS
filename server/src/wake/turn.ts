@@ -55,7 +55,11 @@ export interface WakeTurnOutcome {
 }
 
 function stripMarkers(text: string): string {
-  return text.replace(/^\s*\[(安静|发动态)\]\s*/u, '').trim();
+  return text
+    .replace(/^\s*\[(安静|发动态)\]\s*/u, '')
+    // 去掉它模仿历史消息写出来的时间戳：`[10-19 21:03] …`
+    .replace(/^\s*\[\d{1,2}-\d{1,2}\s+\d{1,2}:\d{2}\]\s*/u, '')
+    .trim();
 }
 
 export async function runWakeTurn(signals: WakeSignals): Promise<WakeTurnOutcome> {
