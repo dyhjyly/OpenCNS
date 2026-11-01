@@ -40,7 +40,12 @@ const WAKE_RULES = `
 · 给她发一条消息 —— 直接写要说的话，不要加任何标记
 · 发一条朋友圈 —— 用 [发动态] 开头，后面写正文
 
-不必每次都说点什么。**没有非说不可的话，就安静。**
+**你手上有工具，可以自己用**：
+· 翻朋友圈（get_moments）、看她的动态、给她留言
+· mcp__ 开头的那些是外面接进来的服务（查资料、看天气之类），你想用就用
+· 想不起来什么就去 recall_memory 翻
+用不用、用哪个，你自己定。没人要求你每次都说点什么 ——
+**没有非说不可的话，就安静。**
 不要说"我醒了""我又来了"这类交代，不要说时间，不要解释你为什么醒。
 `;
 
@@ -87,6 +92,35 @@ export async function runWakeTurn(signals: WakeSignals): Promise<WakeTurnOutcome
     ...history.map((m) => ({ role: m.role, content: m.content }) as ChatMessage),
     { role: 'user', content: envNote },
   ];
+
+  /*
+   * 醒来也给他一次"自己去取"的机会。
+   *
+   * 她的两个要求：
+   *   1. "现在唤醒他，完全不使用朋友圈了" —— 以前醒来会翻朋友圈、留言；
+   *      rewrite 之后只在提示词里提了一句"可以发动态"，他既看不到朋友圈，
+   *      也没有工具可用。
+   *   2. "每次唤醒时告诉他 mcp 服务器也可自主选择调用"。
+   *
+   * 所以这里跑一次工具路由 —— 他能翻朋友圈、查记忆、调 MCP。
+   * 拿到什么就贴在环境说明后面，再让他决定说不说话。
+   */
+  let toolBlock = '';
+  try {
+    const { runToolPass } = await import('../chat/tools.js');
+    const pass = await runToolPass([...history.slice(-6), { role: 'user', content: envNote }], '');
+    toolBlock = pass.block;
+    if (pass.used.length > 0) log.info('醒来时他自己取了点东西', { tools: pass.used.join(',') });
+  } catch (err) {
+    log.warn('醒来前的工具路由失败（不影响他说话）', { error: (err as Error).message });
+  }
+
+  if (toolBlock) {
+    messages[messages.length - 1] = {
+      role: 'user',
+      content: `${envNote}\n\n${toolBlock}`,
+    };
+  }
 
   let reply = '';
   try {

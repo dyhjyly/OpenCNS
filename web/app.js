@@ -1061,8 +1061,32 @@ async function pageSettings() {
 
     box.querySelectorAll('[data-del]').forEach((b) =>
       b.addEventListener('click', async () => {
-        if (!confirm('删掉这个 MCP 服务器？')) return;
-        await api(`/mcp/${b.dataset.del}`, { method: 'DELETE' }).catch(() => {});
+        /*
+         * 不用 confirm()：装成 PWA 之后原生弹窗经常被屏蔽，
+         * 点了没反应、请求也发不出去（她就是这么遇到的）。
+         * 改成"点一次变成确认，再点一次才删"。
+         */
+        if (b.dataset.armed !== '1') {
+          b.dataset.armed = '1';
+          b.textContent = '确认删除？';
+          b.classList.remove('ghost');
+          setTimeout(() => {
+            if (b.dataset.armed === '1') {
+              b.dataset.armed = '';
+              b.textContent = '删除';
+              b.classList.add('ghost');
+            }
+          }, 4000);
+          return;
+        }
+        b.disabled = true;
+        b.textContent = '删除中…';
+        try {
+          await api(`/mcp/${b.dataset.del}`, { method: 'DELETE' });
+          toast('删掉了', 1400);
+        } catch (err) {
+          toast('删除失败：' + err.message, 2600);
+        }
         renderMcp();
       }));
   };

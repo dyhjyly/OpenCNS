@@ -134,7 +134,16 @@ async function prepareTurn(req: ChatRequest & { dryRun?: boolean }): Promise<Pre
   if (!text) throw new Error('message 不能为空');
 
   const actors = await getActorNames();
-  const sessionId = await ensureSession(req.sessionId);
+  /*
+   * dryRun（上下文预览）**不建会话**。
+   *
+   * 以前预览也走 ensureSession，于是每点一次"读取提示词"就多一个空会话；
+   * 空会话的时间比真实会话新，他醒来发的话就落进了空壳里 ——
+   * 微信收到推送、聊天框却看不见。现在预览只借用已有会话，一个都不新建。
+   */
+  const sessionId = req.dryRun
+    ? ((await many<{ id: string }>(`select session_id::text as id from messages group by session_id order by max(event_time) desc limit 1`))[0]?.id ?? '')
+    : await ensureSession(req.sessionId);
   if (!req.dryRun) {
     await appendMessage(sessionId, 'user', text, {
       source: 'chat',
