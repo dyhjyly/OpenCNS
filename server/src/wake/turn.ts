@@ -142,11 +142,21 @@ export async function runWakeTurn(signals: WakeSignals): Promise<WakeTurnOutcome
   if (text.length === 0) return outcome;
 
   try {
+    /*
+     * 落到**最近真正在说话的那个会话**里，不是"最近建的那个会话"。
+     *
+     * 踩过的坑：预览接口会新建空会话，于是"最新会话"是个空壳，
+     * 他醒来的话写进去 —— 微信收到了推送，她打开聊天框却看不见。
+     */
     const sessionId =
       (
         await import('../db/pool.js').then(({ one }) =>
           one<{ id: string }>(
-            `select id::text from sessions order by last_activity_at desc nulls last, started_at desc limit 1`,
+            `select session_id::text as id
+               from messages
+              group by session_id
+              order by max(event_time) desc
+              limit 1`,
           ),
         )
       )?.id ?? null;

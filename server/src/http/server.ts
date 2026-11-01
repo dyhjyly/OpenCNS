@@ -1115,9 +1115,28 @@ export function startHttpServer(): Server {
 
   app.get('/chat/history', requireToken, async (req, res) => {
     try {
-      const sessionId = typeof req.query.sessionId === 'string' ? req.query.sessionId : '';
-      if (!sessionId) return res.status(400).json({ error: 'sessionId_required' });
+      let sessionId = typeof req.query.sessionId === 'string' ? req.query.sessionId : '';
       const limit = Math.min(200, Math.max(1, Number(req.query.limit ?? 60)));
+
+      /*
+       * 没传 sessionId（或者传了个空壳会话）时，退回"最近一条真正有内容的会话"。
+       *
+       * 踩过的坑：他醒来自动说的话落在会话 A，前端手里是会话 B 或者干脆没有，
+       * 于是微信收到推送、聊天框里却什么都没有 —— 看起来像丢消息。
+       */
+      if (!sessionId) {
+        const { one } = await import('../db/pool.js');
+        const latest = await one<{ id: string }>(
+          `select s.id::text as id
+             from sessions s
+            where exists (select 1 from messages m where m.session_id = s.id)
+            order by (select max(event_time) from messages m where m.session_id = s.id) desc
+            limit 1`,
+        );
+        sessionId = latest?.id ?? '';
+      }
+      if (!sessionId) return res.json({ ok: true, sessionId: '', messages: [] });
+
       const { getChatHistory } = await import('../chat/index.js');
       return res.json({ ok: true, ...(await getChatHistory(sessionId, limit)) });
     } catch (err) {

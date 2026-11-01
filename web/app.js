@@ -449,7 +449,7 @@ async function pageChat() {
           <svg viewBox="0 0 24 24">${ICONS.send}</svg>
         </button>
       </form>
-      <input type="file" id="fileInput" accept="image/*,*/*" multiple hidden />
+      <input type="file" id="fileInput" multiple hidden />
     </div>
   `;
 
