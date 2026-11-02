@@ -1,5 +1,6 @@
 import { many } from '../db/pool.js';
 import { log } from '../logger.js';
+import { getSetting, setSetting } from '../settings/index.js';
 
 /**
  * 这一轮要带进上下文的对话原文。
@@ -39,21 +40,34 @@ export async function loadContextHistory(
   sessionId: string | null,
   currentText?: string,
 ): Promise<ContextMessage[]> {
-  const rows = sessionId
-    ? await many<{ role: string; content: string; at: Date | string }>(
-        `select role, content, event_time as at
-           from messages
-          where session_id = $1::uuid
-             or event_time > ((date_trunc('day', now() at time zone 'Asia/Shanghai') - interval '7 days') at time zone 'Asia/Shanghai')
-          order by seq asc`,
-        [sessionId],
-      ).catch(() => [])
-    : await many<{ role: string; content: string; at: Date | string }>(
-        `select role, content, event_time as at
-           from messages
-          where event_time > ((date_trunc('day', now() at time zone 'Asia/Shanghai') - interval '7 days') at time zone 'Asia/Shanghai')
-          order by seq asc`,
-      ).catch(() => []);
+  type Row = { seq: number; role: string; content: string; at: Date | string };
+
+  /*
+   * 锚定起点：上下文从哪一条开始，**记在设置里**，不是每轮现算。
+   *
+   * 这是缓存命中率的根。
+   * 原来的做法是"取最近 7 天，超字数就从最旧裁掉"——可我们这个库常年顶在上限，
+   * 于是**每说一句就裁掉最旧的一条**，历史前缀每轮都变，
+   * prompt 缓存只能命中 system 那一小段（实测 1,408 token / 94,931）。
+   *
+   * 现在：起点锚一次，之后一直用它；只有当新内容把总字数撑到上限的 1.2 倍，
+   * 才重新锚一次（一次裁到 85%）。这样前缀稳定，缓存才吃得上。
+   */
+  const anchoredSeq = Number(getSetting('context.head_seq', 0)) || 0;
+
+  const where = sessionId
+    ? `(session_id = $1::uuid or seq >= $2) and seq >= $2`
+    : `seq >= $1`;
+
+  const params = sessionId ? [sessionId, anchoredSeq] : [anchoredSeq];
+
+  const rows = await many<Row>(
+    `select seq, role, content, event_time as at
+       from messages
+      where ${where}
+      order by seq asc`,
+    params,
+  ).catch(() => []);
 
   // 当前这句在 prepareTurn 里已经写进库了（dryRun 时没写），按内容去掉
   if (currentText && rows.length > 0) {
@@ -61,27 +75,29 @@ export async function loadContextHistory(
     if (last.role === 'user' && last.content.trim() === currentText.trim()) rows.pop();
   }
 
-  // 从最近往回取：超字数预算才停，但前 CONTEXT_MIN_MESSAGES 条一律保留
-  type Row = { role: string; content: string; at: Date | string };
   const total = rows.reduce((n, r) => n + r.content.length, 0);
 
-  /*
-   * 缓冲式裁剪：没超上限就全带上（哪怕这轮刚好顶到边上），
-   * 超了才一次性砍到 85%，把"下一次变动"往后推十来轮。
-   * 目的只有一个：让前缀尽量稳定，prompt 缓存才有得命中。
-   */
-  const target = total > CONTEXT_MAX_CHARS ? CONTEXT_MAX_CHARS * CONTEXT_TRIM_TO : Number.POSITIVE_INFINITY;
+  let picked: Row[] = rows;
 
-  const picked: Row[] = [];
-  let chars = 0;
-  for (let i = rows.length - 1; i >= 0; i--) {
-    const r = rows[i]!;
-    const overBudget = chars + r.content.length > target;
-    if (overBudget && picked.length >= CONTEXT_MIN_MESSAGES) break;
-    picked.push(r);
-    chars += r.content.length;
+  // 只有撑破上限的 1.2 倍，才重新锚一次（裁到 85%）
+  if (total > CONTEXT_MAX_CHARS * 1.2) {
+    const target = CONTEXT_MAX_CHARS * CONTEXT_TRIM_TO;
+    picked = [];
+    let chars = 0;
+    for (let i = rows.length - 1; i >= 0; i--) {
+      const r = rows[i]!;
+      if (chars + r.content.length > target && picked.length >= CONTEXT_MIN_MESSAGES) break;
+      picked.push(r);
+      chars += r.content.length;
+    }
+    picked.reverse();
+
+    const newHead = picked[0]?.seq ?? anchoredSeq;
+    if (newHead !== anchoredSeq) {
+      await setSetting('context.head_seq', newHead).catch(() => undefined);
+      log.info('上下文重新锚定', { 从: anchoredSeq, 到: newHead, 条数: picked.length, 字数: chars });
+    }
   }
-  picked.reverse();
 
   // 首条若是 assistant，丢掉（它是半句话）
   const head = picked[0];
@@ -98,8 +114,8 @@ export async function loadContextHistory(
 
   log.info('上下文窗口', {
     messages: picked.length,
-    chars,
-    hours: CONTEXT_HOURS,
+    chars: picked.reduce((n, r) => n + r.content.length, 0),
+    headSeq: picked[0]?.seq ?? null,
     from: picked[0] ? stampOf(picked[0].at) : null,
   });
 
