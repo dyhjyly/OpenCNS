@@ -1,37 +1,30 @@
 /**
  * 这一轮要带进上下文的对话原文。
  *
- * 聊天和"醒来"共用这一份 —— 醒来也要看到同一段对话，
- * 否则他醒来就是个不记得刚才说过什么的人。
+ * 聊天和"醒来"共用这一份 —— 醒来也要看到同一段对话。
  *
- * 分层（2026-11-02 跟林遇对齐过）：
- *   最近 7 天     → 对话原文，每条带时间戳（就是这里）
- *   7~21 天       → 周记（周一凌晨写，约 400 字）
- *   一个月以上     → 月档，只给一句"还有 N 个月档"，他用 recall_timeline 查
- *   具体的事       → 记忆召回（门铃 → 他自己翻）
+ * 分层（2026-11-02 跟林遇对齐，最终版）：
+ *   本周            → 对话原文，每条带时间戳
+ *   上周（已写周记）→ **只剩最近 20 条**兜底，其余由周记代表
+ *   7~21 天         → 周记
+ *   一个月以上       → 月档（只给"还有 N 个月档"，要用 recall_timeline 查）
+ *   具体的事         → 记忆召回（门铃 → 他自己翻）
  *
- * 所以这里的规则只有一条：**7 天以内，全带上**。
- * 不再有字数上限、不再有裁剪、不再有锚点 —— 那三样是我自己加的安全阀，
- * 结果每轮都裁掉最旧一条，把 prompt 缓存全废了（命中率掉到 1%）。
+ * 关键：**周记写完就把那一周的原文换掉**。
+ * 周一 03:00 写完上一周的周记之后，上周的对话不再整段带，
+ * 只留 20 条接续（保证"接着刚才那句话说"不断片）。
  *
- * 现在唯一的"边界"是按天对齐的 7 天：
- *   起点 = 今天零点往回 7 天的零点。
- * 好处：一整天里起点固定不变 → 前缀稳定 → 缓存吃得上；
- *       到第二天零点头部整体前移一次，重建一次缓存，一天一次，可以接受。
+ * 缓存友好：切换点在周一零点，一周只变一次；那一周之内前缀完全稳定。
  */
 
-import { many } from '../db/pool.js';
+import { many, one } from '../db/pool.js';
 import { log } from '../logger.js';
 
-/** 窗口天数 */
-const CONTEXT_DAYS = 7;
-
-/**
- * 真正的安全阀：只在异常巨大的情况下生效（比如一次塞了几十万字的文件）。
- *
- * 正常情况下 7 天对话大约 8~12 万字，永远碰不到这个数。
- * 设成 40 万字，是为了别让一次意外把整轮请求打到几百万 token。
- */
+/** 没有周记时（比如刚装好）退化成纯 7 天窗口 */
+const FALLBACK_DAYS = 7;
+/** 已写周记的那一周，只保留最近这么多条兜底 */
+const BRIDGE_MESSAGES = 20;
+/** 安全阀：只在异常巨大时生效，防一次塞几十万字把请求打爆 */
 const SAFETY_MAX_CHARS = 400_000;
 
 export type ContextMessage = { role: 'user' | 'assistant'; content: string };
@@ -43,26 +36,52 @@ export async function loadContextHistory(
   type Row = { seq: number; role: string; content: string; at: Date | string };
 
   /*
-   * 起点：今天零点减去 7 天（按上海时间）。
-   * 按天对齐是为了让起点在一天之内**不动** —— 这是缓存能命中的前提。
+   * 1) 上周的周记写到哪儿了？
+   *    period_end 是周日，所以"本周起点" = 周一零点。
    */
-  const cutoff = `((date_trunc('day', now() at time zone 'Asia/Shanghai') - interval '${CONTEXT_DAYS} days') at time zone 'Asia/Shanghai')`;
+  const latestWeek = await one<{ end: string }>(
+    `select period_end::text as end from timeline_periods where kind = 'week' order by period_end desc limit 1`,
+  ).catch(() => null);
 
-  const rows = sessionId
+  const weekStart = latestWeek
+    ? `((('${latestWeek.end}'::date + 1)::timestamp) at time zone 'Asia/Shanghai')`
+    : null;
+
+  const fallbackCutoff = `((date_trunc('day', now() at time zone 'Asia/Shanghai') - interval '${FALLBACK_DAYS} days') at time zone 'Asia/Shanghai')`;
+
+  const afterCutoff = weekStart ?? fallbackCutoff;
+
+  /* 2) 本周的原文 */
+  const raw = sessionId
     ? await many<Row>(
         `select seq, role, content, event_time as at
            from messages
-          where (session_id = $1::uuid or event_time > ${cutoff})
-            and event_time > ${cutoff}
+          where (session_id = $1::uuid or event_time >= ${afterCutoff})
+            and event_time >= ${afterCutoff}
           order by seq asc`,
         [sessionId],
       ).catch(() => [])
     : await many<Row>(
         `select seq, role, content, event_time as at
            from messages
-          where event_time > ${cutoff}
+          where event_time >= ${afterCutoff}
           order by seq asc`,
       ).catch(() => []);
+
+  /* 3) 上周只留最近 20 条兜底（写在周记覆盖之后） */
+  let bridge: Row[] = [];
+  if (weekStart) {
+    bridge = await many<Row>(
+      `select seq, role, content, event_time as at
+         from messages
+        where event_time < ${afterCutoff}
+        order by seq desc
+        limit ${BRIDGE_MESSAGES}`,
+    ).catch(() => []);
+    bridge.reverse();
+  }
+
+  let rows: Row[] = [...bridge, ...raw];
 
   // 当前这句在 prepareTurn 里已经写进库了（dryRun 时没写），按内容去掉
   if (currentText && rows.length > 0) {
@@ -72,7 +91,7 @@ export async function loadContextHistory(
 
   let picked: Row[] = rows;
 
-  // 只在异常巨大时兜底（正常永远不触发）
+  // 安全阀：正常永远不触发
   const total = rows.reduce((n, r) => n + r.content.length, 0);
   if (total > SAFETY_MAX_CHARS) {
     log.warn('上下文异常巨大，按安全阀截断', { total, 上限: SAFETY_MAX_CHARS });
@@ -103,6 +122,9 @@ export async function loadContextHistory(
   log.info('上下文窗口', {
     messages: picked.length,
     chars: picked.reduce((n, r) => n + r.content.length, 0),
+    本周原文: raw.length,
+    上周兜底: bridge.length,
+    周记覆盖至: latestWeek?.end ?? null,
     from: picked[0] ? stampOf(picked[0].at) : null,
   });
 

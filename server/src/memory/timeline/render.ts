@@ -56,16 +56,14 @@ export async function getTimelineLines(): Promise<string[]> {
     const months = periods.filter((p) => p.kind === 'month');
 
     /*
-     * 聊天窗口现在是 7 天，所以"本周这篇周记"的内容上下文里已经有原文了。
-     * 再塞一遍是重复：既占字数，又让他分不清哪份是刚说的。
-     * 只注入**整段都落在对话窗口之外**的周记。
+     * 周记现在是**上周原文的替代品**（周记写完，那一周的对话就只留 20 条兜底），
+     * 所以必须注入，不能像以前那样"落在 7 天窗口内就跳过"。
+     * 给最近两篇，各压到 220 字。
      */
-    const windowStart = new Date(Date.now() - 7 * 24 * 3600_000).toISOString().slice(0, 10);
-    const outsideWeeks = weeks.filter((w) => w.period_end < windowStart);
-    const shown = outsideWeeks.slice(0, 2);
+    const shown = weeks.slice(0, 2);
 
     for (const w of shown) {
-      lines.push(`${w.period_start.slice(5)}~${w.period_end.slice(5)}：${clip(w.content, 160)}`);
+      lines.push(`${w.period_start.slice(5)}~${w.period_end.slice(5)}：${clip(w.content, 220)}`);
     }
 
     // 更早的不展开，只报个数
