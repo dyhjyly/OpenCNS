@@ -1,4 +1,5 @@
 import { log } from '../logger.js';
+import { many } from '../db/pool.js';
 import { chatText, type ChatMessage } from '../llm/client.js';
 import { buildIdentityPrompt } from '../chat/prompt.js';
 import { getActorNames } from '../chat/store.js';
@@ -76,6 +77,35 @@ export async function runWakeTurn(signals: WakeSignals): Promise<WakeTurnOutcome
   const now = await getNowSnapshot();
   const nowLines = renderNowBlock(now).slice(1).join('\n');
 
+  /*
+   * 朋友圈：**直接摆给他看**，不指望他自己去查。
+   *
+   * 她的实测："睡前专门发了一条朋友圈，他应该是没有看到。"
+   * 原因是他手上虽然有了工具，但环境说明里没有任何"有新动态"的线索，
+   * 工具路由自然没理由去翻。这里直接把最近 24 小时的朋友圈贴出来 ——
+   * 一条 SQL 的事，比让他调工具又快又稳。
+   */
+  const moments = await many<{ author: string; content: string; at: Date | string }>(
+    `select author, content, created_at as at
+       from moments
+      where deleted_at is null and created_at > now() - interval '30 hours'
+      order by created_at desc limit 4`,
+  ).catch(() => []);
+  const momentLines = moments.map((m) => {
+    const d = new Date(m.at);
+    const hm = `${String(d.getMonth() + 1)}/${String(d.getDate())} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    const who = m.author === 'self' ? '我' : '她';
+    return `· [${hm}] ${who}：${m.content.replace(/\s+/g, ' ').slice(0, 90)}`;
+  });
+
+  // 他手上有什么外部工具：说清楚，他才知道可以自己用
+  const mcpBrief = await many<{ name: string; tools: unknown }>(
+    `select name, tools from mcp_servers where status = 'connected' and enabled`,
+  ).catch(() => []);
+  const mcpLines = mcpBrief
+    .map((s) => `· ${s.name}：${(Array.isArray(s.tools) ? s.tools : []).map((t: { name?: string }) => t.name).filter(Boolean).slice(0, 6).join(' / ') || '（没列出来）'}`)
+    .filter(Boolean);
+
   // 环境说明：用 user 身份塞一句，等于"世界在跟他说话"，不是她在说
   const envNote = [
     '（以下是环境，不是她说的话）',
@@ -83,12 +113,19 @@ export async function runWakeTurn(signals: WakeSignals): Promise<WakeTurnOutcome
     signals.wantHer >= 0.35 ? `· 你有点想她（${signals.wantHer.toFixed(2)}）` : '',
     signals.wantDo >= 0.35 ? `· 你手上有件想做的事（${signals.wantDo.toFixed(2)}）` : '',
     '她这会儿没在说话。',
+    momentLines.length ? `\n【最近的朋友圈】\n${momentLines.join('\n')}` : '',
+    mcpLines.length ? `\n【你可以调的外部工具】\n${mcpLines.join('\n')}` : '',
+    WAKE_RULES,
   ]
     .filter(Boolean)
     .join('\n');
 
   const messages: ChatMessage[] = [
-    { role: 'system', content: `${buildIdentityPrompt(actors)}${WAKE_RULES}` },
+    /*
+     * system 和聊天**完全一致**，只为了一件事：让 prompt 缓存能复用。
+     * 醒来规则挪到下面那条 user 里（一样生效，而且不破坏前缀）。
+     */
+    { role: 'system', content: buildIdentityPrompt(actors) },
     ...history.map((m) => ({ role: m.role, content: m.content }) as ChatMessage),
     { role: 'user', content: envNote },
   ];

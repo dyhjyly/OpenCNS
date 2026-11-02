@@ -16,8 +16,20 @@ import { log } from '../logger.js';
 
 /** 上下文带多久的对话 —— 周记按周写，窗口给到一周 */
 const CONTEXT_HOURS = 24 * 7;
-/** 字数上限。7 天大概 6~8 万字，留一点余量 */
+/** 字数上限。7 天大概 6~8 万字 */
 const CONTEXT_MAX_CHARS = 120_000;
+/**
+ * 超了之后一次裁到哪。
+ *
+ * **这是缓存命中率的关键。**
+ * 原来是"超一个字就裁一条"：对话密集时每轮都裁掉最旧一条，
+ * 于是历史前缀每轮都变，prompt 缓存全部失效（实测只命中 1,408 token，
+ * 恰好是 system 那部分）。
+ *
+ * 现在留缓冲：只有超过上限才裁，而且一次裁到 85%，
+ * 之后十来轮都不用再裁 —— 前缀稳定，缓存才吃得上。
+ */
+const CONTEXT_TRIM_TO = 0.85;
 /** 无论如何至少带最近这么多条 */
 const CONTEXT_MIN_MESSAGES = 20;
 
@@ -52,11 +64,20 @@ export async function loadContextHistory(
 
   // 从最近往回取：超字数预算才停，但前 CONTEXT_MIN_MESSAGES 条一律保留
   type Row = { role: string; content: string; at: Date | string };
+  const total = rows.reduce((n, r) => n + r.content.length, 0);
+
+  /*
+   * 缓冲式裁剪：没超上限就全带上（哪怕这轮刚好顶到边上），
+   * 超了才一次性砍到 85%，把"下一次变动"往后推十来轮。
+   * 目的只有一个：让前缀尽量稳定，prompt 缓存才有得命中。
+   */
+  const target = total > CONTEXT_MAX_CHARS ? CONTEXT_MAX_CHARS * CONTEXT_TRIM_TO : Number.POSITIVE_INFINITY;
+
   const picked: Row[] = [];
   let chars = 0;
   for (let i = rows.length - 1; i >= 0; i--) {
     const r = rows[i]!;
-    const overBudget = chars + r.content.length > CONTEXT_MAX_CHARS;
+    const overBudget = chars + r.content.length > target;
     if (overBudget && picked.length >= CONTEXT_MIN_MESSAGES) break;
     picked.push(r);
     chars += r.content.length;
