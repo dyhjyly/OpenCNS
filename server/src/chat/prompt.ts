@@ -182,8 +182,9 @@ export function buildContextBlock(input: ContextBlockInput): string {
    */
   const extraReminder = String(getSetting('prompt.reminder', '') ?? '').trim();
   const reminder = extraReminder
-    ? `（提醒：跟她说话用"你"。${extraReminder}）`
-    : '（提醒：跟她说话用"你"，不用"她"。）';
+    ? `（提醒：${extraReminder}）`
+    : // 默认提醒写具体：光说"用你"他改不掉，要给例子
+      '（提醒：跟她说话一律用"你"。括号里的动作也一样——「（看你一眼）」不能说成「（看她一眼）」。）';
 
   return [
     '以下是这一轮的背景，不是她刚说的话。',
