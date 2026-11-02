@@ -44,16 +44,15 @@ export async function loadContextHistory(
         `select role, content, event_time as at
            from messages
           where session_id = $1::uuid
-             or event_time > now() - ($2 || ' hours')::interval
+             or event_time > ((date_trunc('day', now() at time zone 'Asia/Shanghai') - interval '7 days') at time zone 'Asia/Shanghai')
           order by seq asc`,
-        [sessionId, String(CONTEXT_HOURS)],
+        [sessionId],
       ).catch(() => [])
     : await many<{ role: string; content: string; at: Date | string }>(
         `select role, content, event_time as at
            from messages
-          where event_time > now() - ($1 || ' hours')::interval
+          where event_time > ((date_trunc('day', now() at time zone 'Asia/Shanghai') - interval '7 days') at time zone 'Asia/Shanghai')
           order by seq asc`,
-        [String(CONTEXT_HOURS)],
       ).catch(() => []);
 
   // 当前这句在 prepareTurn 里已经写进库了（dryRun 时没写），按内容去掉
